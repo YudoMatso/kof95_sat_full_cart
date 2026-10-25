@@ -1,0 +1,8 @@
+# Images built by kof95_cart.py (they contain game data: never commit them)
+out/
+*.ss
+*.bin
+*.cue
+*.ic1
+*.log
+__pycache__/
