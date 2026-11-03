@@ -39,14 +39,16 @@ What made it hard: the Saturn port is the Neo Geo's 68000 program translated to 
 - **Works** in the Mednafen emulator and on **MiSTer** (with a modified Saturn core, see below), played by hand.
 - **Not tested on a real Saturn**: no 32 MiB Saturn flash cartridge is known to exist.
 - **Not fully covered**: bosses, endings, 2-player mode.
-- The project is finished; nothing more is planned.
+- The project is complete. Any later update is listed in `CHANGELOG.md`.
 
-## Versions
+## Variants
 
-- **v2.0 — No loading** (this version): the full result described above.
-- **v1.0 — Pure**: the original game, unchanged, simply running from the cartridge. Loading screens are already much shorter than on CD, but still there.
+The script builds two variants of the cartridge image:
 
-See `CHANGELOG.md`.
+- **`noloading`**: the full result described above.
+- **`pure`**: the original game, unchanged, simply running from the cartridge. Going from the team screen to the fight already takes about 1.5 seconds instead of about 6 on CD, but the original loading screens are still there.
+
+Releases follow the usual `major.minor.patch` numbering; see `CHANGELOG.md`.
 
 ## Building the cartridge image
 
@@ -59,7 +61,7 @@ Everything is in one Python script, `kof95_cart.py`. It needs **Python 3.8 or la
 python3 kof95_cart.py noloading "path/to/King of Fighters '95.cue" path/to/mpr-18811-mx.ic1 out
 ```
 
-Use `pure` instead of `noloading` for the v1.0 version. The "no loading" build takes about a minute: it prepares the stage graphics in advance with the game's own code.
+Use `pure` instead of `noloading` for the pure variant. The "no loading" build takes about a minute: it prepares the stage graphics in advance with the game's own code.
 
 You get two files in `out/`:
 

@@ -3,16 +3,16 @@
 
 Builds a Saturn cartridge image holding the whole game, from your own dumps:
 
-    python3 kof95_cart.py <version> <disc.cue> <mpr-18811-mx.ic1> [output_dir]
+    python3 kof95_cart.py <variant> <disc.cue> <mpr-18811-mx.ic1> [output_dir]
 
-    version   pure | noloading
-              pure       v1.0: the original game, unchanged, running from the cartridge
-              noloading  v2.0: no loading screens, arcade timing, music kept between rounds
+    variant   pure | noloading
+              pure       the original game, unchanged, running from the cartridge
+              noloading  no loading screens, arcade timing, music kept between rounds
 
     disc.cue           The King of Fighters '95 (Japan), T-3101G, cue sheet with its .bin tracks
     mpr-18811-mx.ic1   the 2 MiB ROM cartridge sold with the game
 
-Writes kof95_cart_<version>.ss (Mednafen) and kof95_cart_<version>_32M.bin (MiSTer, "ROM 32M" core),
+Writes kof95_cart_<variant>.ss (Mednafen) and kof95_cart_<variant>_32M.bin (MiSTer, "ROM 32M" core),
 then checks them against the reference SHA-256. Needs Python 3.8 or later, nothing else.
 
 This file contains only original code: the build modules and the assembled SH-2 code of the
