@@ -57,9 +57,19 @@ Everything is in one Python script, `kof95_cart.py`. It needs **Python 3.8 or la
 - the disc: *The King of Fighters '95* (Japan, T-3101G), as a `.cue` file with its `.bin` tracks;
 - the 2 MiB ROM cartridge sold with the game: `mpr-18811-mx.ic1`.
 
+Linux / macOS:
+
 ```sh
 python3 kof95_cart.py noloading "path/to/King of Fighters '95.cue" path/to/mpr-18811-mx.ic1 out
 ```
+
+Windows (Command Prompt or PowerShell, with Python from python.org):
+
+```bat
+py kof95_cart.py noloading "C:\Games\King of Fighters '95.cue" C:\Games\mpr-18811-mx.ic1 out
+```
+
+The script is written to work on Windows but has only been tested on Linux.
 
 Use `pure` instead of `noloading` for the pure variant. The "no loading" build takes about a minute: it prepares the stage graphics in advance with the game's own code.
 
