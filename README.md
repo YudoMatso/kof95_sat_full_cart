@@ -84,11 +84,15 @@ The script checks the result: it prints **"OK, identical to the reference"** whe
 
 ## Playing
 
-**Mednafen** (tested with version 1.32.1 and a Saturn BIOS). Give it the CD too, for the music:
+**Mednafen** (tested with version 1.32.1 on Linux, with a Saturn BIOS; Mednafen on Windows should work the same way). Give it the CD too, for the music:
 
 ```sh
 mednafen -ss.dbg_exe_cdpath "/absolute/path/to/the.cue" out/kof95_cart_noloading.ss
 ```
+
+On Windows: `mednafen.exe -ss.dbg_exe_cdpath "C:\Games\King of Fighters '95.cue" out\kof95_cart_noloading.ss`
+
+**Other emulators**: the image is a 32 MiB ROM cartridge, which is not a standard Saturn cartridge. It should work in any emulator that can boot a custom ROM cartridge of that size, but none other than Mednafen has been tested, and many only support the official cartridges.
 
 **MiSTer**: the official Saturn core only reads 2 MiB of cartridge. Use the modified core [Saturn_MiSTer_Cart](https://github.com/YudoMatso/Saturn_MiSTer_Cart) (branch `rom-32m`) in "ROM 32M" mode, load `kof95_cart_noloading_32M.bin` as the cartridge and the CD image as usual.
 
