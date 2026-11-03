@@ -96,6 +96,10 @@ On Windows: `mednafen.exe -ss.dbg_exe_cdpath "C:\Games\King of Fighters '95.cue"
 
 **MiSTer**: the official Saturn core only reads 2 MiB of cartridge. Use the modified core [Saturn_MiSTer_Cart](https://github.com/YudoMatso/Saturn_MiSTer_Cart) (branch `rom-32m`) in "ROM 32M" mode, load `kof95_cart_noloading_32M.bin` as the cartridge and the CD image as usual.
 
+## License
+
+The code of this project (`kof95_cart.py`) is free software under the **GNU General Public License v3.0 or later**: you can use, study, modify and share it, as long as modified versions stay under the same license. See `LICENSE`.
+
 ## Legal
 
-Unofficial fan project, not affiliated with SNK or Sega. *The King of Fighters* is a trademark of SNK. `kof95_cart.py` contains only the project's own code; everything from the game is read from your dumps when you run it. Use your own dumps, and never share the images it produces.
+Unofficial fan project, not affiliated with SNK or Sega. *The King of Fighters* is a trademark of SNK. The license above covers only the project's own code, not the game: everything from the game is read from your dumps when you run the script. Use your own dumps, and never share the images it produces.

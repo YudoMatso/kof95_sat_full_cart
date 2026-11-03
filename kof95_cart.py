@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 YudoMatso. https://github.com/YudoMatso/kof95_sat_full_cart
+# This program is free software: you can redistribute it and/or modify it under the terms of the GNU General
+# Public License as published by the Free Software Foundation, either version 3 of the License, or (at your
+# option) any later version. It is distributed WITHOUT ANY WARRANTY; see the LICENSE file or
+# <https://www.gnu.org/licenses/>.
 """The King of Fighters '95 (Sega Saturn) - cartridge edition builder.
 
 Builds a Saturn cartridge image holding the whole game, from your own dumps:
