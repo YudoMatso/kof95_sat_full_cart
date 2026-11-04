@@ -11,6 +11,8 @@ Versions follow `major.minor.patch`: patch = fix, minor = addition that breaks n
 - **Fewer slowdowns**: about 1 frame lost in 2,500 in fights (1.0.0: 1 in 100; original CD: 1 in 300; arcade: 1 in 1,000), measured in an emulator.
 - **The image is exactly 32 MiB**, the most the Saturn's cartridge port can address in one go. Repeated data and data the game never reads (duplicate files, unused sound samples) were removed to make room. The `.ss` file and the MiSTer `_32M.bin` file are now identical.
 - The build takes about a minute and uses several CPU cores.
+- **Fix** (script updated on 2026-11-18): the `noloading` build stopped when the temporary folder had a space in its
+  path, as `E:\Temporary Files` on Windows.
 - **`noloading` is now the default variant**: `python3 kof95_cart.py <disc.cue> <mpr-18811-mx.ic1> [output_dir]` builds it. Add `pure` before the disc for the pure variant; the 1.0.0 commands still work.
 - Tested in Mednafen and on MiSTer.
 
