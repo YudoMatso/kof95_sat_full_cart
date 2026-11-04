@@ -18,15 +18,18 @@ The limit was the medium, not necessarily the console: the Saturn's cartridge po
 - **No loading screens.** From the team screen to the fight, the game takes the same number of frames as the Neo Geo arcade board on 7 stages out of 8 (measured frame by frame against the arcade version in an emulator).
 - **Music starts with the fight and keeps playing between rounds**, instead of stopping and restarting.
 - **Faster start-up**: the "NOW LOADING" screen at boot is gone.
+- **All graphics stored uncompressed**, like on the Neo Geo cartridge: the game never decompresses anything while you play, so slowdowns are rarer than on the arcade board.
+- **Team-order screen taunts are back**: when a team has chosen its order, its characters taunt, as on the arcade version (the Saturn release had dropped them).
 - **Same game otherwise**: same graphics, same voices, same CD soundtrack as the Saturn release.
 
 | | Original Saturn CD | This version | Neo Geo (arcade) |
 |---|---|---|---|
 | Loading before each fight | about 5 seconds of "NOW LOADING" | none (same timing as the arcade) | none |
 | Music between rounds | stops, then restarts | continues | continues |
-| Slowdowns in fights | rare (≈ 1 frame in 300) | rare (≈ 1 frame in 100) | very rare (≈ 1 frame in 1,000) |
+| Slowdowns in fights | rare (≈ 1 frame in 300) | very rare (≈ 1 frame in 2,500) | very rare (≈ 1 frame in 1,000) |
+| Team-order screen taunts | no | yes | yes |
 
-Slowdowns are almost always a single 1/60 s frame, and the only noticeable one happens on all three versions at the same moment.
+Slowdowns are almost always a single 1/60 s frame.
 
 ## How it was done, in short
 
@@ -60,18 +63,18 @@ Everything is in one Python script, `kof95_cart.py`. It needs **Python 3.8 or la
 Linux / macOS:
 
 ```sh
-python3 kof95_cart.py noloading "path/to/King of Fighters '95.cue" path/to/mpr-18811-mx.ic1 out
+python3 kof95_cart.py "path/to/King of Fighters '95.cue" path/to/mpr-18811-mx.ic1 out
 ```
 
 Windows (Command Prompt or PowerShell, with Python from python.org):
 
 ```bat
-py kof95_cart.py noloading "C:\Games\King of Fighters '95.cue" C:\Games\mpr-18811-mx.ic1 out
+py kof95_cart.py "C:\Games\King of Fighters '95.cue" C:\Games\mpr-18811-mx.ic1 out
 ```
 
 The script is written to work on Windows but has only been tested on Linux.
 
-Use `pure` instead of `noloading` for the pure variant. The "no loading" build takes about a minute: it prepares the stage graphics in advance with the game's own code.
+This builds the `noloading` variant, the default. For the pure variant, add `pure` before the disc: `python3 kof95_cart.py pure "path/to/King of Fighters '95.cue" path/to/mpr-18811-mx.ic1 out`. The "no loading" build takes about a minute and uses several CPU cores: it decompresses all the graphics in advance with the game's own code.
 
 You get two files in `out/`:
 

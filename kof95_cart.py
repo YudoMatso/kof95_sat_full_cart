@@ -9,11 +9,12 @@
 
 Builds a Saturn cartridge image holding the whole game, from your own dumps:
 
-    python3 kof95_cart.py <variant> <disc.cue> <mpr-18811-mx.ic1> [output_dir]
+    python3 kof95_cart.py [variant] <disc.cue> <mpr-18811-mx.ic1> [output_dir]
 
-    variant   pure | noloading
+    variant   pure | noloading (default: noloading)
               pure       the original game, unchanged, running from the cartridge
-              noloading  no loading screens, arcade timing, music kept between rounds
+              noloading  no loading screens, arcade timing, music kept between rounds,
+                         order-screen taunts as on the arcade version
 
     disc.cue           The King of Fighters '95 (Japan), T-3101G, cue sheet with its .bin tracks
     mpr-18811-mx.ic1   the 2 MiB ROM cartridge sold with the game
@@ -24,7 +25,7 @@ then checks them against the reference SHA-256. Needs Python 3.8 or later, nothi
 This file contains only original code: the build modules and the assembled SH-2 code of the
 project. No data from the game is included; everything is taken from your dumps at build time.
 """
-import base64, contextlib, hashlib, io, os, sys, tempfile, types, zlib
+import base64, contextlib, hashlib, importlib, io, os, sys, tempfile, zlib
 
 VERSIONS = {}
 
@@ -565,143 +566,155 @@ if __name__ == "__main__":
 )
 
 VERSIONS['noloading'] = dict(
-    sha=('883b66f687de9229a15c67cbb0d4ccdd8be29c84d9784c6751e58a7cbe5e872d', '5b786e0db4504040cf460847978b81eb9525cd80badc1882921a7fc9faa3a608'),
+    sha=('6e8e55c433accdf24612097780e1d9c8932deb0d15c7a0637bc8e52d625d2c91', '6e8e55c433accdf24612097780e1d9c8932deb0d15c7a0637bc8e52d625d2c91'),
     boot='''
 eNoBPADD/9EM0A0hAtEHkAshAdEG0gfTB2AWQxAiAo/7cgTQA0ArAAn/3yWJAAgiQMgABgfNgAAAJ9Ql/gCwFEAf8EgxE3o=
 ''',
     elf='''
-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
-n21IuNFLn12nPfsIPoN5WJiQcZZh61N9jmEzMM6KxV8vfmHG81PH657gQXj/hmSNuHrAV7LyLfI2CefVOu83Ky2nfAlhPOuTxs68
-8YzrIkBSZ15XXl1m1/78T46nXRfZk9eZty2zM7J+z0JbafHJyiJfji9nNBk3jJ6NG8ctm+1K3ri02R7JU/IipxsyFfsG2/rjCWHD
-qbhNeVZJ88nSV7rSK04oIV9RgaCEjn3zroGtjsSxyOyeWTZXdkEZOmGerGqTSNl9Etl0VCIVaC5gPZ2dm96guGH+XZwU3OJr6x7Z
-VuTCdcQ+42uFj9QVOalbHPeeI6/lzbixVh/ZHHqw9QGlNHvr6Fx8DexL5uJ2X5GyGGxBSZOXKqUpd5ZDqf4P/tWcP8b/6j4Za/uc
-8Jr9kcVbLEWuLGeWKysdfN7f58A2UM240vKRRcRwQKbrrYseku0kuL/C/QDoQA5MrVeLykncMLVOLSwnCWNOrHx3xW5ovRasGZ/F
-ZxlVEhVKKPuTpwyJUq1/dE7lTOccLu5oKStJkI5SaP9lObGcmDMIf1XOqrFc3B8mzU6T0zS22mlU3L4sjOmUkHi/vKGi4di5TfWQ
-O1eOrT3ktiUv5lhyxAGH1534jb67UQ2Yc5mABkvAfIOuIAfUJTlRIhl9u8Eo/xM+sGf0gdnvm++7ja6XO6bCQdd0uMRxSGwqGzcn
-CbSR8SxJT0/PGDckhRtLBwRwG5USeL586mYIe3OJI7Ft6uOK45QQXzTVhjs+nwx7vnZhNezOTOmuJEkXksJ4Zq6YNIyX54qjhoR5
-ahu8ua3EEd+YJOMbcsUbvRCv89zN3vyECE9yIZSQyJ6qg1B1OUVNJdO12UVe2e88JJ4rCK44lycUCMv9RX7LgLWpBOv529c3ez2F
-nmVx6cYSeJ4Fq1VnUswVGzPYeFLLsUYa3VDOgzPrzxoLXWoZW68GtbXqdH7I/YaxzBM3viGWeRIyjDNXi7u6qDrrDeKuKnXEbS35
-sDI1nieu8pYCYINr2bS7CmNl72e8QUJu0Bmkvbw65IGQlpbcH28uvSlhenmF4vn2Yig1eUNw1eXVJ8TpzNR7xRlT5qYMWKvDftkp
-QU7T2XNwLcY8434f9qNp9xLJUF0upR29HsyNoB8aInOwZzDMzUE/TEpy+CHQmfwA9qzvgF8E3M9I4tfLxDXqbcbRL3/NdN9Zk3if
-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
-Xh6u5fPgdcfCcP8XBuCqww==
+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
 ''',
     modules={
         'inventory_disc': r'''#!/usr/bin/env python3
@@ -1090,11 +1103,11 @@ if __name__ == "__main__":
             +0x200000, where build_cart.py places it: 28 literal-pool words,
             a pointer split in two 16-bit literals, the ENE_MV/ENE_DT
             pointer table, two PRS pointers and the ROM build list
-            (docs/phase1_step5_patch.md); the call pointers of MM_CALLS go
-            to functions of build/cdrom.elf (docs/iter3_decors.md); the
-            instructions of MM_CODE_WORDS are replaced (docs/iter4_attente.md);
+            (docs/archive/phase1_step5_patch.md); the call pointers of MM_CALLS go
+            to functions of build/cdrom.elf (docs/archive/iter3_decors.md); the
+            instructions of MM_CODE_WORDS are replaced (docs/archive/iter4_attente.md);
             the .m_* sections of the ELF overwrite the MM_WINDOWS
-            (docs/iter8_a.md).
+            (docs/archive/iter8_a.md).
   cart    : the .c_* sections (code run from the cart) are written to
             <out_dir>/cart_*.bin, listed in <out_dir>/blobs.txt for
             build_cart.py --blobs.
@@ -1132,28 +1145,28 @@ ZERO_WINDOWS = [
     ("list loader: trapa #48 0x13 before each file", 0x0607CF72, 0x0607CF76),
     ("dead helpers of the original read (only callers: 0x060834CA, 0x0608347C)", 0x06083558, 0x060836E4),
     ("trapa #48 0x17: stray push of r2 (never popped)", 0x060866A2, 0x060866A4),
-    ("dead asynchronous file queue (docs/iter6_ab.md)", 0x0607EE90, 0x0607EFDC),
+    ("dead asynchronous file queue (docs/archive/iter6_ab.md)", 0x0607EE90, 0x0607EFDC),
     ("dead asynchronous file queue (0x0607F034: FsInit literal)", 0x0607F008, 0x0607F034),
     ("dead asynchronous file queue", 0x0607F038, 0x0607F0A0),
     ("dead asynchronous file queue", 0x0607F364, 0x0607F3BE),
-    ("dead file queue: CD block function, unreferenced (docs/iter7_preload.md)", 0x0607F6C8, 0x0607F73C),
+    ("dead file queue: CD block function, unreferenced (docs/archive/iter7_preload.md)", 0x0607F6C8, 0x0607F73C),
     ("dead file queue: LZSS decompressor, only reached through 0x0607F65E", 0x0607F770, 0x0607F8EC),
     ("file reader: LZSS header test, never taken (no LZSSV001 file)", 0x0607F65E, 0x0607F660),
-    ("trapa #48 table: service 0x11 (docs/iter8_m.md)", 0x06085EAC, 0x06085EB0),
-    ("trapa #48 table: service 0x15 (docs/iter9_rounds.md)", 0x06085EBC, 0x06085EC0),
+    ("trapa #48 table: service 0x11 (docs/archive/iter8_m.md)", 0x06085EAC, 0x06085EB0),
+    ("trapa #48 table: service 0x15 (docs/archive/iter9_rounds.md)", 0x06085EBC, 0x06085EC0),
 ]
 
 # MM.BIN code overwritten by the .m_* sections of the ELF: (name, start, end). The
 # bytes of each window are checked against the original (MM_SHA256) by the hash.
 MM_WINDOWS = [
-    ("loader: NOW LOADING display call 0x06007934 r1 = 2 (docs/iter8_a.md)", 0x06049718, 0x06049720),
+    ("loader: NOW LOADING display call 0x06007934 r1 = 2 (docs/archive/iter8_a.md)", 0x06049718, 0x06049720),
     ("loader: literal 0x06007934, read by 0x06049718 and 0x0604972C only", 0x06049774, 0x06049778),
     ("name lookup: string compare 0x06004B12, only caller 0x06004AA0", 0x06004B10, 0x06004B3E),
     ("resets 0x06006B2E: slot table, map 0x00201100, VDP2 map 0x060CE000", 0x06006B54, 0x06006B80),
     ("name lookup 0x06004A78: first instructions (only entry; 0x06004AE6 is another function)", 0x06004A78, 0x06004A84),
     ("interrupt 0x06002880: literal of its 3rd call 0x0600672C", 0x060028F0, 0x060028F4),
     ("HU module linker 0x06004038 (bsr from 0x060040A8/0x060040DA, bsrf from 0x06004014)", 0x06004038, 0x0600408A),
-    ("state 0x0602A308: braf to 0x0600D294 -> jmp (docs/iter8_d.md)", 0x0602A320, 0x0602A324),
+    ("state 0x0602A308: braf to 0x0600D294 -> jmp (docs/archive/iter8_d.md)", 0x0602A320, 0x0602A324),
     ("state 0x0602A308: literal of that braf, read by 0x0602A31E only", 0x0602A32C, 0x0602A330),
     ("state 0x0602A38C: next-state write 0x0602A3C2-0x0602A3CD (dead after the jmp)", 0x0602A3C2, 0x0602A3CA),
     ("state 0x0602A38C: literal 0x0502, read by 0x0602A3C2 only", 0x0602A3D4, 0x0602A3D8),
@@ -1163,24 +1176,24 @@ MM_WINDOWS = [
     ("interrupt 0x06002880: NBG1 map copy call (0x060069B4 rewritten unchanged)", 0x060069AA, 0x060069B6),
     ("interrupt 0x06002880: literal 0x060F8400 of that call, read by 0x060069AA only", 0x06006A44, 0x06006A48),
     ("loader 0x0604A128: DBRA loop 0x0604A174-0x0604A184 (no branch or literal into it)", 0x0604A174, 0x0604A186),
-    ("frame loop: literal 0x06006BE0, read by 0x060266D4/0x06026742/0x0602679C only (docs/iter8_m.md)", 0x06026A48, 0x06026A4C),
-    ("cart check: sum routine 0x0600233C, only caller bsr 0x060022EC (docs/iter10_demarrage.md)", 0x0600233C, 0x0600235E),
+    ("frame loop: literal 0x06006BE0, read by 0x060266D4/0x06026742/0x0602679C only (docs/archive/iter8_m.md)", 0x06026A48, 0x06026A4C),
+    ("cart check: sum routine 0x0600233C, only caller bsr 0x060022EC (docs/archive/iter10_demarrage.md)", 0x0600233C, 0x0600235E),
     ("init: count of the fixed wait 0x0600219C-0x060021AA (mov #8,r2)", 0x0600219C, 0x0600219E),
     ("sound init 0x06025D44: wait for the slave after command 6 (bt 0x06025D78)", 0x06025D7C, 0x06025D7E),
     ("sound init 0x06025D44: frame wait of the 8-call loop (subc r14,r14; bt 0x06025DE6)", 0x06025DEC, 0x06025DF0),
     ("boot list 0x0604AB3C: NOW LOADING call 0x06007934 r1 = 1 (jsr @r0; sts.l pr,@-r15)", 0x0604ABD2, 0x0604ABD6),
     ("shared wait 0x06049652: entry (count, next state), reached as a state only", 0x06049652, 0x0604965C),
-    ("music dispatcher: literal 0x0602B634, read by the 8 jsr 0x0602B6DA-0x0602B8BE only (docs/iter9_rounds.md)", 0x0602BA40, 0x0602BA44),
+    ("music dispatcher: literal 0x0602B634, read by the 8 jsr 0x0602B6DA-0x0602B8BE only (docs/archive/iter9_rounds.md)", 0x0602BA40, 0x0602BA44),
 ]
 
 # Code run from the cart (.c_* sections, cached CS0 addresses), written as blobs for
 # build_cart.py --blobs: (name, start, end). After the last background of the boot area.
 CS0_CACHED = 0x02000000
 CART_WINDOWS = [
-    ("loader code (docs/iter8_a.md), end of the boot area", 0x021FC000, 0x02200000),
+    ("loader code (docs/archive/iter8_a.md), end of the boot area", 0x021FC000, 0x02200000),
 ]
 
-# MM.BIN literal-pool words loaded by the code (docs/phase1_step4_code.md, 2.3).
+# MM.BIN literal-pool words loaded by the code (docs/archive/phase1_step4_code.md, 2.3).
 MM_POOL_WORDS = {
     0x06002280: 0x2216D080, 0x06002304: 0x22000000, 0x06002310: 0x220000E4,
     0x06002368: 0x22000100, 0x06007844: 0x220D1488, 0x0600B2FC: 0x2208E4D0,
@@ -1210,19 +1223,44 @@ MM_ENE_TABLE = (0x0605CE6C, 234, 0x22080100, 0x2208C2D0)
 # address -> (original target, symbol).
 MM_CALLS = {
     0x06049B2C: (0x06007868, "decor_preload"),  # background preload, jsr at 0x06049764 and 0x0604979E
-    0x0602A2E0: (0x06049652, "fight_wait"),  # next state of 0x0602A274: shared 9-frame wait (docs/iter5_attente.md)
-    0x060028EC: (0x06002A2A, "snd_vbl"),  # VBlank-OUT interrupt, copy lists (docs/iter6_ab.md)
+    0x0602A2E0: (0x06049652, "fight_wait"),  # next state of 0x0602A274: shared 9-frame wait (docs/archive/iter5_attente.md)
+    0x060028EC: (0x06002A2A, "snd_vbl"),  # VBlank-OUT interrupt, copy lists (docs/archive/iter6_ab.md)
     0x0602A3D8: (0x0602A3DC, "snd_state"),  # next state of 0x0602A38C, before the first fight image
     # Not a literal originally: the 2 instructions "mov.l 0x06007A58,r10; bsr 0x06007310" (VDP2 path of the
-    # background tiles), now the literal of the jmp below (docs/iter8_b.md).
+    # background tiles), now the literal of the jmp below (docs/archive/iter8_b.md).
     0x06007724: (0xDACCBDF3, "vdp2_group"),
 }
-# 16-bit instructions replaced in place: address -> (original, new) (docs/iter4_attente.md).
+# 16-bit instructions replaced in place: address -> (original, new) (docs/archive/iter4_attente.md).
 MM_CODE_WORDS = {
     0x0602A316: (0xE107, 0xE100),  # mov #7,r1 -> mov #0,r1: post-load countdown, 8 frames -> 1
     0x0600771C: (0x4101, 0xD001),  # shlr r1 -> mov.l @(1,PC),r0 (= vdp2_group, 0x06007724)
     0x0600771E: (0x319C, 0x402B),  # add r9,r1 -> jmp @r0
     0x06007720: (0x6112, 0x0009),  # mov.l @r1,r1 -> nop (delay slot)
+}
+# Optional detours, applied only if the ELF defines the symbol (option off = image unchanged):
+# symbol -> (literal address, original long, {address: (original, new) 16-bit words}).
+MM_OPT_DETOURS = {
+    # CHAR_RAW: group handler 0x060072D0 of the tile cache -> char_raw (docs/archive/motifs_bruts.md).
+    # "mov #-4,r0; mov.l @(r0,r10),r0; cmp/ge r0,r1; bt 0x06007274; shlr r1; add r10,r1" becomes
+    # "mov.l @(1,PC),r0; jmp @r0; nop; nop; .long char_raw"; char_raw returns to 0x060072DC.
+    "char_raw": (0x060072D8, 0x410131AC, {
+        0x060072D0: (0xE0FC, 0xD001), 0x060072D2: (0x00AE, 0x402B),
+        0x060072D4: (0x3103, 0x0009), 0x060072D6: (0x89CD, 0x0009),
+    }),
+    # MENU_RAW: decompression of 8 groups of 003F.PRS in 0x060077A8 (menus) -> menu_raw (docs/archive/menage.md);
+    # menu_raw returns to 0x060077E0.
+    "menu_raw": (0x060077D8, 0x396CDA9F, {
+        0x060077D0: (0xD91C, 0xD001), 0x060077D2: (0x4601, 0x402B),
+        0x060077D4: (0x369C, 0x0009), 0x060077D6: (0x6662, 0x0009),
+        0x060077DC: (0xBD98, 0x0009), 0x060077DE: (0x4F22, 0x0009),
+    }),
+}
+# Optional 16-bit words, applied only if the ELF defines the symbol: symbol -> {address: (original, new)}, new =
+# "hi"/"lo" for the halves of the symbol's value.
+MM_OPT_WORDS = {
+    # TAUNT (docs/archive/manques_mvs.md): wait of the order screen 20 -> 120 frames (mov #20,r1 -> mov #120,r1), and
+    # the target of the trapa #62 at 0x06034E38 (inline long 0x0600F35E, two words) -> taunt_stub.
+    "taunt_stub": {0x0603432A: (0xE114, 0xE178), 0x06034E3A: (0x0600, "hi"), 0x06034E3C: (0xF35E, "lo")},
 }
 # ROM build list ("ROMHEAD.BIN" -> 0x22000000, ...), destinations of LoadFile.
 MM_BUILD_LIST = {
@@ -1319,6 +1357,32 @@ def patch_mm(mm: bytearray, symbols: dict[str, int]) -> list[str]:
             raise DiscError(f"MM.BIN 0x{addr:08X}: 0x{value:04X}, expected 0x{original:04X}")
         struct.pack_into(">H", mm, addr - MM_BASE, new)
         calls.append(f"MM.BIN 0x{addr:08X} code 0x{original:04X} -> 0x{new:04X}")
+    for symbol, (literal, original, words) in MM_OPT_DETOURS.items():
+        if symbol not in symbols:
+            continue
+        for addr, (old, new) in words.items():
+            value, = struct.unpack_from(">H", mm, addr - MM_BASE)
+            if value != old:
+                raise DiscError(f"MM.BIN 0x{addr:08X}: 0x{value:04X}, expected 0x{old:04X}")
+            struct.pack_into(">H", mm, addr - MM_BASE, new)
+        value, = struct.unpack_from(">I", mm, literal - MM_BASE)
+        if value != original:
+            raise DiscError(f"MM.BIN 0x{literal:08X}: 0x{value:08X}, expected 0x{original:08X}")
+        struct.pack_into(">I", mm, literal - MM_BASE, symbols[symbol])
+        calls.append(f"MM.BIN 0x{min(words):08X} detour -> {symbol} 0x{symbols[symbol]:08X} (literal 0x{literal:08X})")
+    for symbol, words in MM_OPT_WORDS.items():
+        if symbol not in symbols:
+            continue
+        for addr, (old, new) in words.items():
+            value, = struct.unpack_from(">H", mm, addr - MM_BASE)
+            if value != old:
+                raise DiscError(f"MM.BIN 0x{addr:08X}: 0x{value:04X}, expected 0x{old:04X}")
+            if new == "hi":
+                new = symbols[symbol] >> 16
+            elif new == "lo":
+                new = symbols[symbol] & 0xFFFF
+            struct.pack_into(">H", mm, addr - MM_BASE, new)
+            calls.append(f"MM.BIN 0x{addr:08X} code 0x{old:04X} -> 0x{new:04X} ({symbol})")
     return calls + [
         f"MM.BIN {len(MM_POOL_WORDS)} literal-pool words, {len(MM_SPLIT_POINTERS)} split pointer, "
         f"{len(MM_DATA_WORDS)} PRS pointers, "
@@ -1339,7 +1403,7 @@ def names_hash(name: bytes) -> int:
 
 
 def names_index(mm: bytes, addr: int, size: int) -> tuple[bytes, int]:
-    """Hash index of the name registry of MM.BIN for names_fast (docs/iter8_a.md), at
+    """Hash index of the name registry of MM.BIN for names_fast (docs/archive/iter8_a.md), at
     addr: NAMES_BUCKETS chain pointers, then chains of {name, slot} ended by 0. A name
     keeps its first entry, as the walk of 0x06004A78 does."""
     word = lambda a: struct.unpack_from(">I", mm, a - MM_BASE)[0]
@@ -1653,7 +1717,7 @@ class SH2:
 The game loads the background of a stage (00xx.PRS) at 0x06086D80, then
 0x06007868 decompresses its first min(count, 0xDC0) tiles, 8 tiles (1 KiB) per
 group, with the decompressor 0x06007310 and copies them to VDP1 VRAM
-0x25C10000 (docs/iter1_chargements.md, 3.3). This tool runs the original
+0x25C10000 (docs/archive/iter1_chargements.md, 3.3). This tool runs the original
 decompressor of MM.BIN in tools/sh2_interp.py, exactly as 0x06007868 calls it,
 and lays the results out in the free parts of CS0:
 
@@ -1667,7 +1731,7 @@ The decompressed groups are cached in <out_dir>/<name>.bin (checked against
 the SHA-256 of their source file). Output: <out_dir>/blobs.txt, one
 "offset=file" per line, for build_cart.py --blob.
 
---sat (docs/compression_decors.md): the tiles are not placed. Each 00xx.SAT of
+--sat (docs/archive/compression_decors.md): the tiles are not placed. Each 00xx.SAT of
 the data track is exactly the first `count` tiles of this output (Sega's own
 decompressed background, never loaded by the game), and the rounding tail of
 the last group (zero) falls in the zero padding of its last sector. The table
@@ -1746,6 +1810,8 @@ def main() -> int:
     parser.add_argument("cue", type=Path, help="cue sheet of the KOF95 disc")
     parser.add_argument("out_dir", type=Path, help="directory for the tiles, the table and blobs.txt")
     parser.add_argument("--sat", action="store_true", help="point the table to the .SAT files (no tile blob)")
+    parser.add_argument("--source", type=Path, help="disc cue to read the compressed .PRS from (compact track "
+                        "with --strip: tools/compact_track.py); the table still uses the positions of <cue>")
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1759,9 +1825,14 @@ def main() -> int:
             raise DiscError("MM.BIN: SHA-256 differs from the analysed version")
         tiles = {}
         where_sat = {}
+        source = Iso9660(cue_data_track(args.source)) if args.source else iso
+        src_files = {name: (size, lba) for name, size, lba in source.files()}
         for name in DECORS:
+            size, lba = src_files[name + ".PRS"]
+            prs = source.read_extent(lba, size)
             size, lba = files[name + ".PRS"]
-            prs = iso.read_extent(lba, size)
+            if iso.read_extent(lba, min(size, 16)) != prs[:min(size, 16)]:
+                raise DiscError(f"{name}.PRS: header differs from the source disc")
             cache = args.out_dir / f"{name}.bin"
             stamp = args.out_dir / f"{name}.sha256"
             digest = hashlib.sha256(prs).hexdigest()
@@ -1779,6 +1850,8 @@ def main() -> int:
                 if len(pre) > end or any(sat[size:len(pre)]) or any(pre[size:]):
                     raise DiscError(f"{name}.SAT: rounding tail not covered by zero sector padding")
                 where_sat[name] = ISO_OFFSET + lba * LOGICAL_SECTOR_SIZE
+        if source is not iso:
+            source.close()
     finally:
         iso.close()
 
@@ -1813,7 +1886,7 @@ if __name__ == "__main__":
         raise SystemExit(2)
 ''',
         'voice_banks': r'''#!/usr/bin/env python3
-"""Table of the voice banks for the preload of option C (docs/iter7_preload.md).
+"""Table of the voice banks for the preload of option C (docs/archive/iter7_preload.md).
 
 Each character k (0x00-0x19) has a file Ckk.PAC (name table MM.BIN 0x0605E334).
 LoadPac (src/cdrom/cdrom.s, pac_load) walks its PACK header: chunks are
@@ -1889,20 +1962,729 @@ def main() -> int:
 if __name__ == "__main__":
     sys.exit(main())
 ''',
+        'compact_track': r'''#!/usr/bin/env python3
+"""Compact data track (docs/archive/menage.md): the same ISO9660 volume without its duplicates.
+
+    compact_track.py <disc.cue> <cart_rom> <out_dir> [--strip]
+
+Writes <out_dir>/track01.bin (Mode 1/2352) and <out_dir>/compact.cue (data track only). The tools that read
+the disc (patch_kof95.py, precalc_decors.py, voice_banks.py, build_cart.py) take this cue instead of the
+disc's: the rule ROM = 0x400000 + LBA * 2048 and the game's file layer do not change, only the directory.
+The CD in the drive stays the original disc (music).
+
+- Sectors 0-24 (IP, volume descriptors, path tables, root directory at LBA 20-24) are kept in place; the file
+  records of the root directory get their new extent and size, the primary descriptor its new volume size.
+- Files follow in their original order, each from a sector boundary; the 150 empty sectors at the end go.
+- Ckk.PAC / Ckk.APM: the APM is chunk 1 of the PAC, byte for byte. Chunk 0 of the PAC gets padding (its
+  size field grows, later offsets move) so that chunk 1 starts on a sector; the APM record points there.
+  pac_load walks the chunks from the first offset with the size fields, so the padding is never read.
+- Files that are byte copies of a part of the cart ROM (mpr-18811, at 0x200000 in the cart) get an empty
+  record (extent 0, size 0): the game reads them in the cart; their only reader by name is the ROM build list
+  of MM.BIN, whose destinations are cart addresses (docs/archive/menage.md 1.4).
+- Files with the same content share one extent.
+
+--strip (clean image, the tiles are all raw in the cart: tools/char_raw.py) also removes what nothing reads any
+more (docs/archive/menage.md 1):
+- chunk 0 of the Ckk.PAC (compressed character tiles) keeps its 8-byte header (tile count, read by pac_load and
+  0x060498C8), then the padding up to chunk 1;
+- the tile files 001A-003E.PRS keep their first 16 bytes: the header (tile count at +4) and the 8 bytes that
+  char_raw compares for a character side;
+- the .PCM files (skipped by the list loader of `0`) get an empty record.
+The tools that decompress (precalc_decors.py, char_raw.py) then read the tiles from the original disc (--source).
+
+The ECC/EDC of the sectors stay zero: only these tools read the track.
+"""
+from __future__ import annotations
+
+import argparse
+import struct
+import sys
+from pathlib import Path
+
+from inventory_disc import LOGICAL_SECTOR_SIZE, RAW_SECTOR_SIZE, DiscError, Iso9660, cue_data_track
+
+SECTOR = LOGICAL_SECTOR_SIZE
+ROOT_LBA, ROOT_SECTORS = 20, 5
+FIRST_FILE_LBA = 25
+PVD_LBA, VOLUME_SIZE_FIELD = 16, 80
+PACK = b"PACK"
+
+
+def le_be32(value: int) -> bytes:
+    return struct.pack("<I", value) + struct.pack(">I", value)
+
+
+def pac_chunks(pac: bytes) -> list[tuple[int, int]]:
+    """(offset, size field) of each PACK entry; offsets as pac_load walks them."""
+    chunks, k = [], 0
+    stream = struct.unpack_from(">I", pac, 8)[0]
+    while pac[16 * k:16 * k + 4] == PACK:
+        size = struct.unpack_from(">I", pac, 16 * k + 12)[0]
+        chunks.append((stream, size))
+        stream += size & ~3
+        k += 1
+    return chunks
+
+
+def align_chunk1(pac: bytes, strip: bool = False) -> tuple[bytes, int]:
+    """PAC whose chunk 1 starts on a sector (chunk 0 padded, or with strip cut to its 8-byte header and padded);
+    returns (pac, offset of chunk 1)."""
+    chunks = pac_chunks(pac)
+    (o0, s0), (o1, _) = chunks[0], chunks[1]
+    if s0 & 3 or o0 + s0 != o1:
+        raise DiscError("chunk 0 is not followed directly by chunk 1")
+    keep = 8 if strip else s0
+    new_o1 = o0 + keep + (-(o0 + keep) % SECTOR)
+    shift = new_o1 - o1
+    out = bytearray(pac[:o0 + keep]) + bytes(new_o1 - o0 - keep) + pac[o1:]
+    struct.pack_into(">I", out, 12, new_o1 - o0)
+    for k in range(1, len(chunks)):
+        offset = struct.unpack_from(">I", out, 16 * k + 8)[0]
+        struct.pack_into(">I", out, 16 * k + 8, offset + shift)
+    if pac_chunks(bytes(out))[1][0] != new_o1:
+        raise DiscError("padded PACK header is inconsistent")
+    return bytes(out), new_o1
+
+
+def mode1_sector(lba: int, data: bytes) -> bytes:
+    m, s, f = (lba + 150) // 4500, (lba + 150) // 75 % 60, (lba + 150) % 75
+    bcd = lambda v: (v // 10) << 4 | v % 10
+    head = b"\x00" + b"\xff" * 10 + b"\x00" + bytes((bcd(m), bcd(s), bcd(f), 1))
+    return head + data + bytes(RAW_SECTOR_SIZE - 16 - SECTOR)
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("cue", type=Path)
+    p.add_argument("cart_rom", type=Path)
+    p.add_argument("out_dir", type=Path)
+    p.add_argument("--strip", action="store_true", help="also remove the compressed tiles and the .PCM files")
+    a = p.parse_args()
+    rom = a.cart_rom.read_bytes()
+    iso = Iso9660(cue_data_track(a.cue))
+    try:
+        head = bytearray(iso.read_extent(0, FIRST_FILE_LBA * SECTOR))
+        entries = sorted(iso.files(), key=lambda e: e[2])          # (name, size, lba), disc order
+        if any("/" in n for n, _, _ in entries) or iso.root != (ROOT_LBA, ROOT_SECTORS * SECTOR):
+            raise DiscError("expected a single root directory at LBA 20-24")
+        data = {n: iso.read_extent(lba, size) for n, size, lba in entries}
+    finally:
+        iso.close()
+
+    log, new_data, alias = [], {}, {}            # alias: name -> (owner, byte offset) or None (empty)
+    for n, _, _ in entries:
+        if len(data[n]) >= 64 and rom.find(data[n]) >= 0:
+            alias[n] = None
+            log.append(f"{n:13} empty record: copy of the cart ROM at +0x{rom.find(data[n]):06X}")
+    if a.strip:
+        for n, _, _ in entries:
+            if n.endswith(".PCM"):
+                alias[n] = None
+                log.append(f"{n:13} empty record: never loaded (the list loader skips .pcm)")
+            elif n.endswith(".PRS") and 0x1A <= int(n[:4], 16) <= 0x3E and n not in alias:
+                new_data[n] = data[n][:16]
+                log.append(f"{n:13} cut to 16 bytes (raw tiles in the cart)")
+    for n, _, _ in entries:
+        apm = n[:-4] + ".APM"
+        if n.startswith("C") and n.endswith(".PAC") and apm in data:
+            pac, o1 = align_chunk1(data[n], a.strip)
+            if pac[o1:o1 + len(data[apm])] != data[apm]:
+                raise DiscError(f"{apm} is not chunk 1 of {n}")
+            new_data[n] = pac
+            alias[apm] = (n, o1)
+            log.append(f"{apm:13} -> {n} +0x{o1:X} (chunk 0: {o1 - pac_chunks(data[n])[0][0]} bytes, "
+                       f"{'header and padding' if a.strip else 'padded'})")
+    first = {}
+    for n, _, _ in entries:
+        if n not in alias and n not in new_data:
+            twin = first.setdefault(data[n], n)
+            if twin != n:
+                alias[n] = (twin, 0)
+                log.append(f"{n:13} -> {twin} (same content)")
+
+    out = bytearray(head)
+    where = {}                                    # name -> (lba, size)
+    for n, _, _ in entries:
+        if n in alias:
+            continue
+        body = new_data.get(n, data[n])
+        where[n] = (len(out) // SECTOR, len(body))
+        out += body + bytes(-len(body) % SECTOR)
+    for n, target in alias.items():
+        if target is None:
+            where[n] = (0, 0)
+        else:
+            owner, offset = target
+            where[n] = (where[owner][0] + offset // SECTOR, len(data[n]))
+    sectors = len(out) // SECTOR
+
+    # Root directory records, in place (same lengths).
+    root = ROOT_LBA * SECTOR
+    pos, seen = root, 0
+    while pos < root + ROOT_SECTORS * SECTOR:
+        length = out[pos]
+        if length == 0:
+            pos = (pos // SECTOR + 1) * SECTOR
+            continue
+        name = out[pos + 33:pos + 33 + out[pos + 32]].decode("ascii")
+        name = name.split(";")[0].rstrip(".")
+        if name in where:
+            lba, size = where[name]
+            out[pos + 2:pos + 10] = le_be32(lba)
+            out[pos + 10:pos + 18] = le_be32(size)
+            seen += 1
+        pos += length
+    if seen != len(where):
+        raise DiscError(f"{seen} records rewritten, {len(where)} files")
+    out[PVD_LBA * SECTOR + VOLUME_SIZE_FIELD:PVD_LBA * SECTOR + VOLUME_SIZE_FIELD + 8] = le_be32(sectors)
+
+    a.out_dir.mkdir(parents=True, exist_ok=True)
+    with (a.out_dir / "track01.bin").open("wb") as f:
+        for lba in range(sectors):
+            f.write(mode1_sector(lba, out[lba * SECTOR:(lba + 1) * SECTOR]))
+    (a.out_dir / "compact.cue").write_text('FILE "track01.bin" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n')
+
+    # Check: every file reads back as before (PACs: padded copy).
+    check = Iso9660(a.out_dir / "track01.bin")
+    try:
+        for n, size, lba in check.files():
+            expect = b"" if alias.get(n, 0) is None else new_data.get(n, data[n])
+            if check.read_extent(lba, size) != expect:
+                raise DiscError(f"{n}: content differs after compaction")
+    finally:
+        check.close()
+    old = len(head) // SECTOR + sum(-(-len(d) // SECTOR) for d in data.values())
+    for line in log:
+        print(line)
+    print(f"{len(where)} files, {sectors} sectors ({sectors * SECTOR / 2**20:.2f} MiB; files of the disc: "
+          f"{old} sectors) -> {a.out_dir / 'compact.cue'}")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (DiscError, OSError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        sys.exit(2)
+''',
+        'char_raw': r'''#!/usr/bin/env python3
+"""CHAR_RAW test image (docs/archive/motifs_bruts.md): tile groups already decompressed in the ROM.
+
+    char_raw.py <image.ss> <file_table.tsv> <cdrom.elf> <out.ss> [--log FILE]
+
+<image.ss> is built with --defsym CHAR_RAW=1 (tools/build_c2.sh), DECOR_SAT=1 for room. The tiles of chunk 0 of the 26
+C*.PAC, of 003F.PRS, 2009.PRS and of the small 001A-0033.PRS are decompressed here by the original decompressor 0x06007310 (sh2_interp),
+placed in the free end of CS0, then in CS1 (Mednafen only: images over 32 MiB put the rest in CS1),
+and the table char_raw_tab of the cart code gets the pairs {compressed source as the tile cache sees
+it, raw tiles}. The output is 48 MiB; the end of CS1 stays 0xFF (cart ID byte 0x24FFFFFF). When everything fits
+in CS0 (compact track, docs/archive/menage.md), the output is 32 MiB.
+"""
+from __future__ import annotations
+
+import argparse
+import struct
+import sys
+from multiprocessing import Pool
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from patch_kof95 import elf_symbols  # noqa: E402
+from sh2_interp import SH2, Mem  # noqa: E402
+
+CS0_BASE, CS0_SIZE, CS1_SIZE = 0x22000000, 0x2000000, 0x1000000
+CS0_CACHED = 0x02000000
+ID_KEEP = 0x10000                       # end of CS1 left 0xFF
+BOOT_AREA, BOOT_USED = 0x200000, 0x2000  # boot area; IP (0x1800) + boot program below BOOT_USED
+DECOMPRESS, GROUP_BUF, MM_BASE = 0x06007310, 0x060CDB10, 0x06002040
+SRC = 0x06200008
+HOOK = 0x060072D0                       # group handler, detoured by patch_kof95.py
+PRS_003F_KEY = 0x222D1488               # entry 0x06007194 source: 003F.PRS + 8 in the relocated mpr-18811
+PRS_2009_KEY = 0x22353888               # entry 0x06007204 source: 2009.PRS + 8 in the relocated mpr-18811
+
+
+def decompress(body_with_header: bytes, mm: bytes) -> bytes:
+    """All the groups of a tile file (8-byte header, then group offsets), as 0x060072D0 would."""
+    data = body_with_header
+    mem = Mem()
+    high = mem.map(0x06000000, 0x100000)
+    high[MM_BASE - 0x06000000: MM_BASE - 0x06000000 + len(mm)] = mm
+    mem.map(SRC - 8, len(data) + 0x1000, data)
+    cpu = SH2(mem)
+    stack, ret = 0x060FF000, 0xDEAD0000
+    out = bytearray()
+    groups = struct.unpack_from(">I", data, 8)[0] // 4
+    for g in range(groups):
+        offset = struct.unpack_from(">I", data, 8 + 4 * g)[0]
+        mem.w32(stack - 4, ret)
+        cpu.r[9], cpu.r[10], cpu.r[15] = SRC + offset, GROUP_BUF, stack - 4
+        cpu.call(DECOMPRESS, ret)
+        assert cpu.r[15] == stack
+        s = GROUP_BUF - 0x06000000
+        out += high[s:s + 1024]
+    count = struct.unpack_from(">I", data, 4)[0]
+    assert len(out) >= count * 128, (len(out), count)
+    return bytes(out)
+
+
+def job(args):
+    name, key, data, mm = args
+    return name, key, decompress(data, mm)
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("image", type=Path)
+    p.add_argument("table", type=Path)
+    p.add_argument("elf", type=Path)
+    p.add_argument("out", type=Path)
+    p.add_argument("--blobs", type=Path, help="blobs.txt of the build: the rest of the boot area is free too")
+    p.add_argument("--dedup", action="store_true", help="each distinct 1 KiB group once; char_raw_tab gives a "
+                   "table of group addresses per file (needs RAW_DEDUP=1)")
+    p.add_argument("--free-mpr", action="store_true", help="clear the compressed bodies of 003F.PRS and 2009.PRS in "
+                   "the relocated mpr-18811 (first 16 bytes kept) and use that room (needs MENU_RAW=1)")
+    p.add_argument("--source", type=Path, help="disc cue to read the compressed tiles from (image built on a compact "
+                   "track with --strip, tools/compact_track.py); the keys still come from the image")
+    a = p.parse_args()
+    source = {}
+    if a.source:
+        from inventory_disc import Iso9660, cue_data_track
+        iso = Iso9660(cue_data_track(a.source))
+        try:
+            source = {n: iso.read_extent(lba, size) for n, size, lba in iso.files()
+                      if n.endswith(".PAC") or n.endswith(".PRS")}
+        finally:
+            iso.close()
+
+    img = bytearray(a.image.read_bytes())
+    files = {}
+    for line in a.table.read_text().splitlines()[1:]:
+        path, _lba, size, off, _ = line.split("\t")
+        files[path] = (int(off, 16), int(size))
+    sym = elf_symbols(a.elf)
+    tab, tab_end = sym["char_raw_tab"], sym["char_raw_tab_end"]
+
+    mo, mz = files["MM.BIN"]
+    mm = bytes(img[mo:mo + mz])
+    word = struct.unpack_from(">H", mm, HOOK - MM_BASE)[0]
+    if word != 0xD001:
+        raise SystemExit(f"MM.BIN 0x{HOOK:08X} = 0x{word:04X}: image not built with CHAR_RAW=1")
+
+    jobs = []
+    for i in range(0x1A):
+        name = f"C{i:02X}.PAC"
+        off, size = files[name]
+        head = img[off:off + 16]
+        assert head[:4] == b"PACK"
+        c_off, c_size = struct.unpack_from(">II", head, 8)
+        # pac_load: chunk 0 starts at file + offset of the first chunk; the cache source is +8.
+        chunk0 = bytes(img[off + c_off:off + c_off + c_size])
+        if name in source:
+            o, z = struct.unpack_from(">II", source[name], 8)
+            if source[name][o:o + 8] != chunk0[:8]:
+                raise SystemExit(f"{name}: chunk 0 header differs from the source disc")
+            chunk0 = source[name][o:o + z]
+        jobs.append((name, CS0_BASE + off + c_off + 8, chunk0, mm))
+    # Tile files read in place in the relocated mpr-18811 (entries 0x06007194, 0x06007204).
+    for name, key in (("003F.PRS", PRS_003F_KEY), ("2009.PRS", PRS_2009_KEY)):
+        off, size = files[name]
+        rel = key - 8 - CS0_BASE
+        if name in source:
+            prs = source[name]
+            if img[rel:rel + len(prs)] != prs:
+                raise SystemExit(f"{name} of the source disc differs from its mpr-18811 copy")
+        elif size == 0:
+            # Compact track (tools/compact_track.py): empty record, the file is only in mpr-18811 (which ends at
+            # 0x400000); the decompressor reads only what its group table needs.
+            prs = bytes(img[rel:0x400000])
+        else:
+            prs = bytes(img[off:off + size])
+            if img[rel:rel + size] != prs:
+                raise SystemExit(f"{name} of the track differs from its mpr-18811 copy")
+        jobs.append((name, key, prs, mm))
+    # Small .PRS copied to the low-RAM slots by cache_copy from the track (slot_copy keys);
+    # 003D/003E.PRS: loaded whole by LoadFile to a character side in the menus (decor_read keys).
+    for name in [f"{i:04X}.PRS" for i in range(0x1A, 0x34)] + ["003D.PRS", "003E.PRS"]:
+        off, size = files[name]
+        prs = bytes(img[off:off + size])
+        if name in source:
+            if source[name][:len(prs)] != prs:
+                raise SystemExit(f"{name}: differs from the source disc")
+            prs = source[name]
+        jobs.append((name, CS0_BASE + off + 8, prs, mm))
+
+    with Pool(min(16, len(jobs))) as pool:
+        blocks = sorted(pool.map(job, jobs), key=lambda b: -len(b[2]))
+
+    # Free areas: end of CS0 (after the image), CS1 except its end.
+    start = (len(img) + 0x3FF) & ~0x3FF
+    img.extend(b"\xFF" * (CS0_SIZE + CS1_SIZE - len(img)))
+    free = [[start, CS0_SIZE], [CS0_SIZE, CS0_SIZE + CS1_SIZE - ID_KEEP]]
+    if a.blobs:
+        # Boot area 0x000000-0x200000: IP and boot program below BOOT_USED, then the blobs of the build.
+        used = [(0, BOOT_USED)]
+        for line in a.blobs.read_text().split():
+            off, _, path = line.partition("=")
+            off = int(off, 0)
+            if off < BOOT_AREA:
+                used.append((off, off + Path(path).stat().st_size))
+        lo = 0
+        for s_, e_ in sorted(used) + [(BOOT_AREA, BOOT_AREA)]:
+            s_ &= ~0x3FF
+            if s_ - lo >= 0x400:
+                if any(img[lo:s_]):
+                    raise SystemExit(f"boot area 0x{lo:X}-0x{s_:X} is not empty")
+                free.insert(0, [lo, s_])
+            lo = max(lo, (e_ + 0x3FF) & ~0x3FF)
+    if a.free_mpr:
+        if "menu_raw" not in sym:
+            raise SystemExit("--free-mpr needs an image built with MENU_RAW=1 (003F.PRS is read by 0x060077A8)")
+        # Bodies in the relocated mpr-18811 (cart 0x200000): 003F.PRS 0x0D1480 (533474 bytes), 2009.PRS 0x153880
+        # (104406 bytes). Their first 16 bytes stay (header, tile count read at key - 4 by the original path).
+        for start, size in ((0x2D1480, 533474), (0x353880, 104406)):
+            img[start + 16:start + size] = bytes(size - 16)
+            free.insert(0, [(start + 16 + 0x3FF) & ~0x3FF, (start + size) & ~0x3FF])
+    if a.dedup != ("raw_dedup" in sym):
+        raise SystemExit("--dedup and RAW_DEDUP=1 go together (char_raw_tab holds group tables, not raw tiles)")
+
+    def take(n, align=0x400):
+        area = next((f for f in free if f[1] - ((f[0] + align - 1) & -align) >= n), None)
+        if area is None:
+            raise SystemExit(f"no room left for {n} bytes")
+        at = (area[0] + align - 1) & -align
+        area[0] = at + n
+        return at
+
+    pairs, log = [], []
+    if a.dedup:
+        where, unique = {}, 0
+        for name, key, raw in blocks:
+            table = bytearray()
+            for g in range(0, len(raw), 0x400):
+                group = raw[g:g + 0x400]
+                if group not in where:
+                    at = take(0x400)
+                    img[at:at + 0x400] = group
+                    where[group] = CS0_BASE + at
+                    unique += 1
+                table += struct.pack(">I", where[group])
+            at = take(len(table), 4)
+            img[at:at + len(table)] = table
+            pairs.append((key, CS0_BASE + at))
+            log.append(f"{name}: source 0x{key:08X} -> group table 0x{CS0_BASE + at:08X} ({len(raw) // 0x400} groups)")
+        total = sum(len(b[2]) // 0x400 for b in blocks)
+        log.append(f"dedup: {total} groups, {unique} distinct ({(total - unique) * 0x400} bytes saved)")
+    for name, key, raw in ([] if a.dedup else blocks):
+        area = next((f for f in free if f[1] - f[0] >= len(raw)), None)
+        if area is None:
+            log.append(f"{name}: {len(raw)} bytes, no room left (original path)")
+            continue
+        at = area[0]
+        area[0] = (at + len(raw) + 0x3FF) & ~0x3FF
+        img[at:at + len(raw)] = raw
+        pairs.append((key, CS0_BASE + at))
+        log.append(f"{name}: source 0x{key:08X} -> raw 0x{CS0_BASE + at:08X} ({len(raw)} bytes)")
+    if 8 * len(pairs) + 4 > tab_end - tab:
+        raise SystemExit("char_raw_tab too small")
+    t = tab - CS0_CACHED
+    if any(img[t:tab_end - CS0_CACHED]):
+        raise SystemExit(f"char_raw_tab at 0x{tab:08X} is not empty in the image")
+    for i, (key, raw) in enumerate(sorted(pairs)):
+        struct.pack_into(">II", img, t + 8 * i, key, raw)
+    if img.count(0xFF, CS0_SIZE) == len(img) - CS0_SIZE:
+        del img[CS0_SIZE:]          # nothing in CS1: a 32 MiB image (CS0 only, MiSTer core "ROM 32M")
+    a.out.write_bytes(img)
+    used = sum(len(b[2]) for b in blocks)
+    print("\n".join(log))
+    left = ", ".join(f"0x{CS0_BASE + lo:08X}+0x{hi - lo:X}" for lo, hi in free)
+    print(f"{len(pairs)}/{len(blocks)} files, {used} raw bytes; left {left}; table 0x{tab:08X}; -> {a.out} ({len(img)} bytes)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+''',
+        'taunt': r'''#!/usr/bin/env python3
+"""TAUNT data (docs/archive/manques_mvs.md): the provocations of the order screen, built from the Saturn data only.
+
+    taunt.py <image.ss> <cdrom.elf> <char_raw.log> <out.ss>
+
+<image.ss> is the clean image (tools/build_clean.sh, CHAR_RAW + RAW_DEDUP, char_raw.py --dedup) assembled with
+TAUNT=1. For each character k (bank k, 0-0x19), its combat taunt (animation 0x5E, in the relocated mpr-18811) is
+copied as animation 0xB0 + k of bank 0x1A (the order-screen bank, tile base 0):
+  - its pieces are copied to free entries of the piece table of bank 0x1A (no animation of the bank uses them),
+    tile field renumbered into a range of the tile cache from FIRST;
+  - the range has a group table (char_raw_tab entry, key = its own address): each 8-tile group points to the raw
+    group already in the image (group table of the C*.PAC, 2009.PRS past C09 for character 9). No tile is copied;
+  - records, images, pieces and group table go to the system area of the data track (sectors 2-15, never read),
+    within reach of the 24-bit image addresses of the records (68k address A -> cart 0x22180100 + A);
+  - taunt_par = {FIRST, group count * 8, key}.
+Every word written is checked: anim list entries 0xB0-0xC9 must hold the filler of the bank, piece entries must be
+unused, the system area and taunt_par must be zero.
+"""
+from __future__ import annotations
+
+import argparse
+import re
+import struct
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from patch_kof95 import elf_symbols  # noqa: E402
+
+CS0 = 0x22000000
+BIAS = 0x180100                 # cart offset = 68k address + BIAS (relocated mpr-18811)
+ANIM_MAP = 0x28E5D0             # cart offset of the animation -> entry tables (MM.BIN 0x0600FB04: 0x2228E5D0)
+BANK, TAUNT, NEW = 0x1A, 0x5E, 0xB0
+FIRST = 0x5400                  # after side A (0x3FA0 + 0x13A4) on the order screen
+AREA = (0x401000, 0x408000)     # data track sectors 2-15 (0x400000 + LBA * 2048)
+
+
+class Img:
+    def __init__(self, data: bytearray):
+        self.d = data
+
+    def l(self, a: int) -> int:           # 68k address
+        return struct.unpack_from(">I", self.d, a + BIAS)[0]
+
+    def w(self, a: int) -> int:
+        return struct.unpack_from(">H", self.d, a + BIAS)[0]
+
+    def b(self, a: int) -> int:
+        return self.d[a + BIAS]
+
+
+def anim_entry(img: Img, k: int, anim: int) -> int:
+    off = struct.unpack_from(">I", img.d, ANIM_MAP + 4 * k)[0]
+    return img.d[ANIM_MAP + off + 2 * anim + 1]
+
+
+def records(img: Img, a: int) -> list[bytes]:
+    out = []
+    for _ in range(400):
+        r = bytes(img.d[a + BIAS:a + BIAS + 6])
+        out.append(r)
+        if r[0] in (0xFE, 0xFF):
+            return out
+        a += 6
+    raise SystemExit(f"animation at ${a:06X}: no end")
+
+
+def image_entries(img: Img, f: int) -> list[bytes]:
+    out = []
+    for _ in range(40):
+        e = bytes(img.d[f + BIAS:f + BIAS + 6])
+        out.append(e)
+        if not struct.unpack_from(">H", e, 4)[0] & 0x2000:
+            return out
+        f += 6
+    raise SystemExit(f"image at ${f:06X}: no end")
+
+
+def mask_width(dims: int) -> int:
+    """Bytes per column mask: one up to 8 rows, a 16-bit word past 8 rows (pieces 0x95, 0xA5...)."""
+    return 2 if dims >> 4 > 8 else 1
+
+
+def piece_bytes(img: Img, p: int) -> bytes:
+    dims = img.b(p)
+    n = 4 + (dims & 0xF) * mask_width(dims)
+    return bytes(img.d[p + BIAS:p + BIAS + n + (n & 1)])
+
+
+def piece_tiles(pc: bytes) -> tuple[int, int]:
+    first = struct.unpack_from(">H", pc, 2)[0]
+    n = (pc[0] & 0xF) * mask_width(pc[0])
+    return first, sum(bin(x).count("1") for x in pc[4:4 + n])
+
+
+def used_pieces(img: Img, k: int) -> set[int]:
+    lst = img.l(0x80000 + 4 * k)
+    used = set()
+    for a in {img.l(lst + 4 * i) for i in range(256)}:
+        for _ in range(300):
+            if not 0x80000 <= a < 0x280000:
+                break
+            c = img.b(a)
+            if c in (0xFE, 0xFF):
+                break
+            if c < 0xFA:
+                f = img.l(a) & 0xFFFFFF
+                for _ in range(40):
+                    if not 0x80000 <= f < 0x280000:
+                        break
+                    wd = img.w(f + 4)
+                    used.add(wd & 0x1FF)
+                    if not wd & 0x2000:
+                        break
+                    f += 6
+            a += 6
+    return used
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("image", type=Path)
+    p.add_argument("elf", type=Path)
+    p.add_argument("log", type=Path, help="char_raw.log of the clean build (group tables of the tile files)")
+    p.add_argument("out", type=Path)
+    a = p.parse_args()
+    data = bytearray(a.image.read_bytes())
+    img = Img(data)
+    sym = elf_symbols(a.elf)
+    for s in ("taunt_stub", "taunt_par", "char_raw_tab", "raw_dedup"):
+        if s not in sym:
+            raise SystemExit(f"symbol {s} missing: image not built with TAUNT=1 and RAW_DEDUP=1")
+    gtab = {}
+    for line in a.log.read_text().splitlines():
+        m = re.match(r"(\S+): source 0x(\w+) -> group table 0x(\w+) \((\d+) groups\)", line)
+        if m:
+            gtab[m[1]] = (int(m[3], 16) - CS0, int(m[4]))
+
+    def group_addr(name: str, g: int) -> int:
+        off, n = gtab[name]
+        if g >= n:
+            raise SystemExit(f"{name}: group {g} beyond its {n} groups")
+        return struct.unpack_from(">I", data, off + 4 * g)[0]
+
+    # Bank 0x1A: identity animation map, filler entries, free pieces.
+    lst1a, pt1a = img.l(0x80000 + 4 * BANK), img.l(0x80080 + 4 * BANK)
+    filler = img.l(lst1a + 4 * 0xFF)
+    free = sorted(set(range(0x200)) - used_pieces(img, BANK))
+    log = [f"bank 0x1A: list ${lst1a:06X}, pieces ${pt1a:06X}, {len(free)} free pieces, filler ${filler:06X}"]
+
+    chars = []
+    for k in range(0x1A):
+        if anim_entry(img, BANK, NEW + k) != NEW + k:
+            raise SystemExit(f"bank 0x1A: animation 0x{NEW + k:02X} is not mapped to its own entry")
+        if img.l(lst1a + 4 * (NEW + k)) != filler:
+            raise SystemExit(f"bank 0x1A: entry 0x{NEW + k:02X} is not the filler")
+        lst, pt = img.l(0x80000 + 4 * k), img.l(0x80080 + 4 * k)
+        recs = records(img, img.l(lst + 4 * anim_entry(img, k, TAUNT)))
+        frames = list(dict.fromkeys(struct.unpack(">I", r[:4])[0] & 0xFFFFFF for r in recs if r[0] < 0xFA))
+        imgs = {f: image_entries(img, f) for f in frames}
+        pieces = {}
+        for ents in imgs.values():
+            for e in ents:
+                idx = struct.unpack_from(">H", e, 4)[0] & 0x1FF
+                pieces.setdefault(idx, piece_bytes(img, img.l(pt + 4 * idx)))
+        groups = sorted({t // 8 for pc in pieces.values() for t in
+                         range(piece_tiles(pc)[0] - 0x1000, sum(piece_tiles(pc)) - 0x1000)})
+        chars.append((k, recs, frames, imgs, pieces, groups))
+
+    # Tile range: per character, its groups in order (a piece's consecutive tiles stay consecutive).
+    table, number = [], {}
+    for k, *_, groups in chars:
+        name = f"C{k:02X}.PAC"
+        n = gtab[name][1]
+        for g in groups:
+            number[k, g] = FIRST + 8 * len(table)
+            table.append(group_addr(name, g) if g < n else group_addr("2009.PRS", g - n))
+    if FIRST + 8 * len(table) > 0x8000:
+        raise SystemExit("tile range beyond 0x8000")
+
+    out = bytearray()
+    at = AREA[0]
+
+    def put(blob: bytes) -> int:
+        nonlocal out
+        while len(out) & 3:
+            out += b"\0"
+        pos = AREA[0] + len(out)
+        out += blob
+        return pos
+
+    gt = put(b"".join(struct.pack(">I", x) for x in table))
+    slots = iter(free)
+    n_pieces = n_entries = 0
+    for k, recs, frames, imgs, pieces, groups in chars:
+        new_slot = {}
+        for idx, pc in pieces.items():
+            first, cnt = piece_tiles(pc)
+            t = first - 0x1000
+            g, r = divmod(t, 8)
+            new_first = number[k, g] + r
+            # the whole run must be consecutive in the range
+            last_g = (t + cnt - 1) // 8
+            if cnt and number[k, last_g] - number[k, g] != 8 * (last_g - g):
+                raise SystemExit(f"bank {k:X} piece {idx:X}: tiles not consecutive")
+            pcn = bytearray(pc)
+            struct.pack_into(">H", pcn, 2, new_first)
+            try:
+                slot = next(slots)
+            except StopIteration:
+                raise SystemExit("bank 0x1A: no free piece left")
+            pa = put(bytes(pcn)) - BIAS
+            off = pt1a + 4 * slot + BIAS
+            struct.pack_into(">I", data, off, pa)
+            new_slot[idx] = slot
+            n_pieces += 1
+        new_frame = {}
+        for f in frames:
+            ents = bytearray()
+            for e in imgs[f]:
+                wd = struct.unpack_from(">H", e, 4)[0]
+                ents += e[:4] + struct.pack(">H", (wd & 0xFE00) | new_slot[wd & 0x1FF])
+                n_entries += 1
+            new_frame[f] = put(bytes(ents)) - BIAS
+            if new_frame[f] >> 24:
+                raise SystemExit("image beyond the 24-bit reach")
+        rs = bytearray()
+        for r in recs:
+            if r[0] < 0xFA:
+                f = struct.unpack(">I", r[:4])[0] & 0xFFFFFF
+                rs += struct.pack(">I", (r[0] << 24) | new_frame[f]) + r[4:]
+            else:
+                rs += r
+        ra = put(bytes(rs)) - BIAS
+        struct.pack_into(">I", data, lst1a + 4 * (NEW + k) + BIAS, ra)
+        log.append(f"character {k:2X}: {len(recs)} records, {len(frames)} images, {len(pieces)} pieces, "
+                   f"{len(groups)} groups, animation 0x{NEW + k:02X} at ${ra:06X}")
+    if AREA[0] + len(out) > AREA[1]:
+        raise SystemExit(f"system area full: {len(out)} bytes")
+    if any(data[AREA[0]:AREA[0] + len(out)]):
+        raise SystemExit("system area of the track is not empty")
+    data[AREA[0]:AREA[0] + len(out)] = out
+
+    # char_raw_tab: append {key, group table} (linear search up to a zero key); taunt_par.
+    tab = sym["char_raw_tab"] - 0x02000000
+    end = sym["char_raw_tab_end"] - 0x02000000
+    i = tab
+    while struct.unpack_from(">I", data, i)[0]:
+        i += 8
+    if i + 12 > end:
+        raise SystemExit("char_raw_tab full")
+    key = CS0 + gt
+    struct.pack_into(">II", data, i, key, CS0 + gt)
+    par = sym["taunt_par"] - 0x02000000
+    if any(data[par:par + 12]):
+        raise SystemExit("taunt_par is not empty")
+    struct.pack_into(">III", data, par, FIRST, 8 * len(table), key)
+    a.out.write_bytes(data)
+    print("\n".join(log))
+    print(f"{n_pieces} pieces, {n_entries} image entries, {len(table)} groups: tiles 0x{FIRST:04X}-0x"
+          f"{FIRST + 8 * len(table) - 1:04X}; {len(out)} bytes at 0x{CS0 + AREA[0]:08X}; key 0x{key:08X}; "
+          f"{len(free) - n_pieces} free pieces left -> {a.out}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+''',
     },
 )
 
 
-def load_modules(sources):
-    for name in sources:
+def load_modules(sources, folder):
+    """Write the modules to a folder and import them (real files: the worker processes can import them too)."""
+    for name, src in sources.items():
         sys.modules.pop(name, None)
-    for name, src in sources.items():
-        mod = types.ModuleType(name)
-        mod.__file__ = name + '.py'
-        sys.modules[name] = mod
-    for name, src in sources.items():
-        exec(compile(src, name + '.py', 'exec'), sys.modules[name].__dict__)
-    return {n: sys.modules[n] for n in sources}
+        with open(os.path.join(folder, name + '.py'), 'w', encoding='utf-8') as f:
+            f.write(src)
+    sys.path.insert(0, folder)
+    importlib.invalidate_caches()
+    return {n: importlib.import_module(n) for n in sources}
 
 def call(mod, *argv):
     """Run a module's command-line entry point, its output going to the log."""
@@ -1917,21 +2699,30 @@ def call(mod, *argv):
 
 def build(version, cue, rom, out_dir):
     v = VERSIONS[version]
-    m = load_modules(v['modules'])
     os.makedirs(out_dir, exist_ok=True)
     ss = os.path.join(out_dir, f'kof95_cart_{version}.ss')
     log = io.StringIO()
     with tempfile.TemporaryDirectory() as t:
+        mods = os.path.join(t, 'modules')
+        os.makedirs(mods)
+        m = load_modules(v['modules'], mods)
         boot, elf = os.path.join(t, 'boot.bin'), os.path.join(t, 'cdrom.elf')
         open(boot, 'wb').write(zlib.decompress(base64.b64decode(v['boot'])))
         open(elf, 'wb').write(zlib.decompress(base64.b64decode(v['elf'])))
         p = os.path.join(t, 'p')
-        args = [cue, rom, boot, ss, '--run-from-cart', '--replace', '0=' + os.path.join(p, '0'),
-                '--replace', 'MM.BIN=' + os.path.join(p, 'MM.BIN')]
+        disc = cue
+        if version == 'noloading':
+            # Clean image: data track without duplicates, compressed tiles and .PCM; every tile stored raw.
+            cue = os.path.join(t, 'compact', 'compact.cue')
+            ss_c2 = os.path.join(t, 'c2.ss')
+        args = [cue, rom, boot, ss_c2 if version == 'noloading' else ss, '--run-from-cart',
+                '--replace', '0=' + os.path.join(p, '0'), '--replace', 'MM.BIN=' + os.path.join(p, 'MM.BIN')]
         with contextlib.redirect_stdout(log):
             if version == 'noloading':
-                print('* precomputing the stage tiles with the game\'s own decompressor (about a minute)', file=sys.stderr)
-                call(m['precalc_decors'], cue, os.path.join(t, 'decors'))
+                print('* compacting the data track', file=sys.stderr)
+                call(m['compact_track'], disc, rom, os.path.join(t, 'compact'), '--strip')
+                print('* preparing the stage tiles and the voice table', file=sys.stderr)
+                call(m['precalc_decors'], '--sat', '--source', disc, cue, os.path.join(t, 'decors'))
                 call(m['voice_banks'], cue, os.path.join(t, 'voice'))
             print('* patching the game files', file=sys.stderr)
             call(m['patch_kof95'], cue, elf, p)
@@ -1940,9 +2731,21 @@ def build(version, cue, rom, out_dir):
                 with open(blobs, 'w') as f:
                     for d in ('decors', 'voice', 'p'):
                         f.write(open(os.path.join(t, d, 'blobs.txt')).read())
-                args += ['--blobs', blobs]
+                args += ['--blobs', blobs, '--table', os.path.join(t, 'file_table.tsv')]
             print('* building the cartridge image', file=sys.stderr)
             call(m['build_cart'], *args)
+            if version == 'noloading':
+                print('* decompressing every tile with the game\'s own decompressor (about a minute)', file=sys.stderr)
+                raw_log = io.StringIO()
+                with contextlib.redirect_stdout(raw_log):
+                    call(m['char_raw'], ss_c2, os.path.join(t, 'file_table.tsv'), elf, os.path.join(t, 'raw.ss'),
+                         '--blobs', blobs, '--source', disc, '--free-mpr', '--dedup')
+                log.write(raw_log.getvalue())
+                with open(os.path.join(t, 'char_raw.log'), 'w') as f:
+                    f.write(raw_log.getvalue())
+                print('* adding the order-screen taunts', file=sys.stderr)
+                call(m['taunt'], os.path.join(t, 'raw.ss'), elf, os.path.join(t, 'char_raw.log'), ss)
+        sys.path.remove(mods)
     data = open(ss, 'rb').read()
     mister = os.path.join(out_dir, f'kof95_cart_{version}_32M.bin')
     open(mister, 'wb').write(data + b'\xff' * (32 * 1024 * 1024 - len(data)))
@@ -1955,12 +2758,16 @@ def build(version, cue, rom, out_dir):
         print(f'{path}: {"OK, identical to the reference" if good else "DIFFERENT from the reference " + ref[:16]}')
     return ok
 
+DEFAULT = 'noloading' if 'noloading' in VERSIONS else next(iter(VERSIONS))
+
 def main():
-    if len(sys.argv) not in (4, 5) or sys.argv[1] not in VERSIONS:
+    args = sys.argv[1:]
+    version = args.pop(0) if args and args[0] in VERSIONS else DEFAULT
+    if len(args) not in (2, 3):
         print(__doc__)
         return 1
-    version, cue, rom = sys.argv[1:4]
-    out = sys.argv[4] if len(sys.argv) == 5 else '.'
+    cue, rom = args[:2]
+    out = args[2] if len(args) == 3 else '.'
     try:
         ok = build(version, cue, rom, out)
     except Exception as e:
