@@ -5,716 +5,422 @@
 # Public License as published by the Free Software Foundation, either version 3 of the License, or (at your
 # option) any later version. It is distributed WITHOUT ANY WARRANTY; see the LICENSE file or
 # <https://www.gnu.org/licenses/>.
-"""The King of Fighters '95 (Sega Saturn) - cartridge edition builder.
+"""The King of Fighters '95 (Sega Saturn) - cartridge edition builder, version 2.0 (beta).
 
-Builds a Saturn cartridge image holding the whole game, from your own dumps:
+Builds a 48 MiB Saturn cartridge image holding the whole game, with the Neo Geo music and sound effects, from your
+own dumps:
 
-    python3 kof95_cart.py [variant] <disc.cue> <mpr-18811-mx.ic1> [output_dir]
-
-    variant   pure | noloading (default: noloading)
-              pure       the original game, unchanged, running from the cartridge
-              noloading  no loading screens, arcade timing, music kept between rounds,
-                         order-screen taunts as on the arcade version
+    python3 kof95_cart.py <disc.cue> <mpr-18811-mx.ic1> <kof95.zip> [output_dir]
 
     disc.cue           The King of Fighters '95 (Japan), T-3101G, cue sheet with its .bin tracks
     mpr-18811-mx.ic1   the 2 MiB ROM cartridge sold with the game
+    kof95.zip          the Neo Geo MVS ROM set of The King of Fighters '95 (MAME name kof95; 084-m1.m1,
+                       084-v1.v1, 084-v2.v2 and 084-v3.v3 are read)
 
-Writes kof95_cart_<variant>.ss (Mednafen) and kof95_cart_<variant>_32M.bin (MiSTer, "ROM 32M" core),
-then checks them against the reference SHA-256. Needs Python 3.8 or later, nothing else.
+Writes kof95_cart.ss (Mednafen) and kof95_cart_48M.bin (MiSTer), the same 48 MiB image, then checks it against the
+reference SHA-256. Needs Python 3.8 or later, nothing else. The music is rebuilt from the MVS sound program by an
+emulated Z80: about 4 to 5 minutes of processor time per piece of music, 23 pieces, run in parallel on all cores.
 
-This file contains only original code: the build modules and the assembled SH-2 code of the
-project. No data from the game is included; everything is taken from your dumps at build time.
+This file contains only original code: the build modules and the assembled SH-2 code of the project. No data
+from the game is included; everything is taken from your dumps at build time.
 """
-import base64, contextlib, hashlib, importlib, io, os, sys, tempfile, zlib
+import base64, concurrent.futures, contextlib, hashlib, importlib, io, os, subprocess, sys, tempfile, zipfile, zlib
 
 VERSIONS = {}
 
-VERSIONS['pure'] = dict(
-    sha=('1dc75a62b82617dc9daa4c14a880af98f18ed368560d0c9678e5afd361c13cf5', 'ef17e95a6d5aa267be2ad8a6948d3024224c104ffa348d67181282fc31eeb7bb'),
+VERSIONS['arcade'] = dict(
+    sha=('d8c878ed8ad4ca7827d3987c641cf4f7f224e7c45b706b07c706a19ac60f2458', 'd8c878ed8ad4ca7827d3987c641cf4f7f224e7c45b706b07c706a19ac60f2458'),
     boot='''
-eNq7yD6BW5HxIvsl9sscCWLOAkpM/b+LWC6wOGgzcP6/z8Cp2snAoeRwgoGN/WwDA4P6FQBvFQ5z
+eNq7KHBBUJHpIvcEYUXGi1yXuC9zJ4g5Cygx9f8uYrnIfYnnMg+Cf4HZQZuB8/991U4GDiWHEwxs7GcbGBjUr6j+Y9gg4iD/QUn+
+AQMb1wIGBgbmCQAAPRuE
 ''',
     elf='''
-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
+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
+MQ6cJ+HvA0v8bQb2A5yW+KWMfwOW+K8MzKenJX4r4yKwxG9lqsDSfJ6J9f/TkvyemQa8XMLQd5yW+OnMxcASf5zxsrF/lfH9q5lF
+wNskvAo4JGGcKRrtkvBG4HYJN6qLXpHm+8xtwJK8ntmB+9Sl8mZC/nxlQMI74S7Jj5mDwJL8mImzNK9I8n7mJ4AlfjvzPviX+O1M
+yL+v7JfwZ+Eu8U+Z4I9fleTdTPDHr0rtmwl9yKsSv5wJ/vhViV/PRHu/KvHzmajPVyX+PRP88atSf8hEe78qtX8m9NOvyu11K903
+L+GL2E9s0C+0Y5aiOZ6U+m+WA1haX8vC+H5SGh9Z0Gc+KY2HrFxgaTxkLQdeLWHoR56U+nsW9CNPSuMjqxrYL2HoR54sl3AzsLQ+
+loXxPrNeQxjriU9K63FZoNdPSutxWf3A0vpdFvZ//FCSv7PuAJbk3SzoM3/4kIQfAJbkt6y/AZb47yzIRz+U+Ouso9Bf8PK5RHr/
+RPfF6xjnLbK+Yuzn091jxnqXi68HZX3fuCdEdz9Dfz9bxxT/G5AHj0r4F3QmU8dYzzE9Tec3dUxHJt6nM3tx/3Nt9DfSdIz1vrke
+OoulY6w9zZ1vnF8R4efm0h21UvgCfpY1jsuN8y0uzkfNraS/gSPFV0d3D8fLM7eZ/o5UPLzpFJ0r1DHt57vfOFfu4nqJuR82zq+4
++Drz3G510b++L6U/aJy/EeHnfmx2/czdb+xvd3H+YO79xn46Pf7HjP2tuvthOrcqhYc+84ePSRjrS0+8J5Xna8Z5Vt193FjPdPH1
+w7kv8/OD8fy9Rn8rSPL/U+NslY4vxvsH5WeeGf3nW/H+M89lnN/RcRb9/fR4+HnQV578pISxf6OsJp7+vDLjvIFwN/+bcY5Q9J95
+VXQeXQq/ic6ax+t/XrNx/knU37ww1hO9Uvhu+rtg8f41r4/+Np8U3y3G/lW9fCMozwWpPA/Q3ZuS/4fp7LCE/9742+g6ftq4S1G0
+x7yvGfcd6vikumhSSi+l0Dg/JfrnvH+lM8uS/x+TTl7K39t0b2jcv7mVzn9K9fm+sV4n8jMf54NvNdoL8uT8LPr7bZK719jvK+Kf
+X2CcB3Px/YPzV84u73zMjy9K438+9k9NnZupr0h7366dRbvY5i1NrVA8cLOptrpZfNhcw83apuq6yq21rAon0VsbKzezYG1rU+W6
+WjK31jZuXMctzZVVZNZtbGpu8rOazZWtwYa6jdypJugns7FhS31NCY8yWEv+dGtTc2WjYUc43cZT2cLjrN5QubGeBRtr6xoqa1pr
+KxvrPsAo0lbyvaGhYVOTyFZjbWtNbXVDI9vasLG6tnUdYhW2mo2NVCj9c13let3aVId3E1u3sYXnu5Zthq2pspk1NdS3bt4qXILN
+m3mMLa219a3BusrqWra+srGmljU3tzb7WDOSrm1tbmhmzZVb6ptZY+X1yEXNliBr2lxZV9favLEOSWyurd+CTF7PUJZGbmls2Ny6
+rrLGp3tbB2+tmytbWN261qaNN9SSCWfGC8RddSvqeca+sR6VioI3bESG6aaA1rqG68Un2Kl2grWNNVvEmxoWud1YvaG2NbjVsG1q
+oBKgTJsrG9cb8dZXrS9l9aWtqFHdaK3bjCaYsSOfsDdW1q9vIktNbWPjxlrheXNDM3oELJX1GzeTuW6deLc2owNwh+raujoevjaI
+HsItTbWNW3nwOhGoqqGxnuPKrRubucUwmzauZ1UNzegbKNVMp2iu3Fg3A6o3bKnfRB0nuLGW2he2jTWotK1NrfUNGxvRGE1bUAzo
+2YKi5YTBu1vVJvTbhjoyb2hAFmCKPgVLU11DcxNZ6slGlupK1CFZqiqbuLmusZoHQZ9GvaIO6msrt5AtSC0o+urWmV67DnXatLGm
+tnVDTaPoPvjUIjrbVurSda2d4XYfjMEoXu0dkV19rZ3dPR0AGLitkV3Rm2a+D4TbuINA/X0R2Dt6B/pu8ulgsD3q59Z1G9dvaG69
+vnJjM6MXOk1DEO43hrsHEOWe3gGA/oHwQIfxsWfXLkp/ACn3t4Zb+2bsbdyOOFvbwv0dPJ/8y6rOzpmc9HWE2wF6Olv7u28mP/07
+wz09rTvDe8XXTu5M5WylXEbCka4OPcc9u8LtHX2tEXioqa5ppUoTNjR05QcEtfpAfTXjlKV1U21tEF0DDRkkV3hDKzRvaUJEO/f0
+tw6G+/op/nZetj26nedRlHd7B+Pv1oG+cGSHHqqnXZCauo3oDAghMsYrHq1XI0Ymt13f0LiJCtLd2956466+HbrdKBtVYFTES/UV
+jtenUYPxWtVTQBijSzc0otsTUeXUq6l6Sysohz5YG3hLkrfaxtYt9Y0NGF2ofJHTXX3d2yllqvi2HXqHMRoZbUDG9j7K3GBHX3fn
+oGGhHtbRXyIMv541X4lu6e5F3NFwa/+eNm4OdgjcvjPcIYrcE95OUUfbUaU6pnJG9lACfeGdMMLt7Ua85LOvH43RP6BbO7s7etql
+bl7KmlDHdQ3cwN+FIqOSNz7ZOCGn8a3Xl6ihEmHQWNxaVSfqkLpErbDCO0esubZyc2sl5rf6TYZRpc8QgtoKe3UD0Xdkf1f3XsoX
+VUY/Grtnl27p6oZlNxVgV09PiZR5skepCkp4w/Aa6e/pjlCjYNjiXUb9oifMi49KKhHVQ8ZO/qZhyHupaFBKjQKSuZu/o3oNU9Kl
+ZO7p295RysRo4gAfd3RHdrT2G5nhtp7u/oH+mYK09s8URfijgNw22NbDzUikTwwImmW4pWrLOv0LyOpmMYVsDjJObbb37doTbY1E
+9+gdchUVGL2OzLY9nasEkSAj3OnjJnrbnp0dq/T5nShw3SB6b0kFmeSJTL/P5yOTMq+7X0lm+67eDm7yvj9okMRBvccNUtX6hQdq
+A0Q4oIdfSUbbTQMd/fwz9cxBUE96U+55bmg2RIdZXyuIjrBeTyS8ubXEHycTmH9E6aN9HSUzNr+w9XbQkIsaQzBqNEBUuKCBB8Ko
+c92JiiPM1kiXsO4U8fTt6eXRUCQDreHSUh/Bnf3bCQpSNzBD1EQnixpEPUpNTEZfx4CfBwtHyaCIRd56B0UqInNgB0pAfOtqWG/b
+9hLum1tuBi3p1d+8xnupYsnooarrJXJgEKnK5o1bDfZCzJo19a2C84OFZiAk3U6dgoyVFavKySyN+Mio8OkfK3QzTGa4g968h6M0
+7X49sJ88RLhloK2Hm6t4NNyhg1tKfLwHCZJZXzdjAysHhobe4Bha4jadJRO+GitvYL09qLzdjEZFZ/deglFO+AaFSXxjDZ+j1nGO
+kngb4vFa+BwFX709u2iKHOShqWN2hdt33cht4cEOEQ/Fyn3BN28hmNw7TKpZMgW17e0p910Z4RbqEL3hnZhFdupmZ1i0SXf7XjIi
+O6OdZPZ1bOfttqM7yj/TzLBhC3XgTaxrD0LjhY4HutTVunNXez+ZfR09uyJk6dgbJffundFdfQPcqb9nl7CIMYc6ApFdz6IDO/tE
+GaOdaLDOCLfQbATD6I6drVeWl5cJL6W+Ct3CezRZKkSgjs5VfvHF3yE8l1LlwOQ8Sphbe/lbDHdYUE0lukuZT8RHlK9NOHIioH8S
+GaLpiVKg8U+xtXULBz4l6hF1gLoI11JuDGCsiDyQSSmyvvDNqEC8ua27l2h334zJ25IbPbt6t/eTnWrPMPkHTji5TQxKYc74x8Dl
+LH51Q/ADcI2gpXgNRHgMwkaf2mY+CRsnfxG95JHWaHcHzUERQQcjgg5GRPEjnPxFjLkjQsyLznDCvqu7f1cvZ8DWk/gj5lGCEJrI
+2NxQIzCnktxG0gw3hcBU2bRJeNhaXSKEwjqfEDub67i5qUoY61jjJoqWuLGuXbt2cMt26jlkiewZ4KaYN1jdTp347Wzdzt+DnELC
+5AgdmfsRhJHCccq4UzChcA/37zBMmnJ2wp2+DAzohBsW/6qKcm4ZJOoyMCC8wKRGgdHDO/UApssBbuA4KBnlwhj0cwP0k5u79ojc
+7UJUmJAHIzxTkMrRRXaAf9hD43uHwbHyAhuO5LkOo0svLzpPR08ntxh1sUOycUcSW1o3bwG96xddjneNnXt66EPJTnpTITgPjblc
+WK6vYFVNOqmGpa6BhL66NsSwZydr24UIyEIfBsM9ezqEEyaxAW7rFZFAdSAs1XWNFcIGsiviJ+61CmJrLTfqa1tgBiFsNzd+QMQv
+mJ+2G1tXlpbrZgU3KbMck4xEps/PTd5W1Y0iLpikuSATYioZYOrqyRTyXF2kr5U4UBiCb4BlgEsnkZkBCduOjpuEhfcYmKJDwNLG
+uXqKpQ+EISKGnxhxA7pcBEt7H28bRMNN0e/6xJy104gElvYOkQUx1AbCrTR3wWgTRjTcx03wdnXbw/psQRZOQWDh1EX/0M9tFISL
+lHW19ZhZOO/KOBMbiXIswsIS5m8+edNnzkTtpYLg3d7dJxBlFLoirnIhc3Pl+o3V0CRhyuoJ38Qt/R0dO4QF/ZZbRCeNDLZyygxz
+Z3h7d4TbSnDemrwM7BKYaoYwF57IEukJ74zq8dJwgJ/ITuHEh22EHCID3MKpfIQ7iHT4rEep6A5+3Sz16anqqZG/qsYtJA1DVVS7
+pZHrgAT731QPDRLUGP3gaLox5+zsDw+07tClAi4Ybq1pDW4h/cnWGkNkqGndTKI8ZNWN9evJ5J1xsF1n/GGJEA8CsxP1DAM0GOK6
+4ULsomAAKUi0u5dMPhfQ947OATIhCnQNCI8gNlWNPMkgVGQgx2SCEa8SNqHDoE8QdT4gLI0g2bBUrsMBd5gbKrdwr1BlkBGEnorr
+tgjUz4Twi3jrt5K51T/bG3A9A6/L24dMqlXdpLkbhexcWcYtvF1gdlAPIUtk18423arL5PSRz+MQR8J7hBOGk+7Qx1mHdoPHp287
+242o/XFPwjqofyHOljIETIYemEY1H1g0iEsF5iMraExt0Ou0bsAbKr9qqGq20lfE2EEdm5sGL9Nh8DIdBi/TYfAyHQYv02HwMh0G
+LwNLuT+iWzrLhYULO5SELpjDKgQeWDDKRZSCZMFiCBQdulRPeeLS+Uwp9fD9wrvuWUjuHTOSO4+S80UdM6ySsAl/gkXqMFisDp1X
+6jBIvu4kSleygxt+0dENeUIv+So/1U4P2CJGOdtF9C+qz4jRHsEjYqLs54aeJ+B24Sq4EjBcnZxKGTzfIHGF4gOnsIM64zfIWcNB
+g+kb7DQ0FIMG+zeos3+DOvs3OCNeDholGhwwUhkAJ0LzKiw68RwAmSUK2bbD6L6w3czlUVhKSIIhJ546LG27+nQnvUlgi+4iLgAW
+QbrJOzGT3EkUFzZeXJicYyMXYtnouyiObhPRUHEo8R0iBJUKJlH3nW06N9rWbWSyW89k90z+u7lmAwbpNWCEhTc9m9361EYBwyJg
+qS9cIT74fHqMOqZuD7PCz43OTmLcBwZ1dgwWERUs3dEebnbyKX9ge9wS8YWJu8KsQAZyGCU2Az08rmhg7b1cVemnuuPlM0YPNIs7
+O3r3YPa5UWhLoCURU2CcDeITPDmSloSRIpMUl0YMzGB//bpOhc/PA2EMOjEJwyPnTnlc3FHoOYU/I8c0xhA1nymRGdR1O/JNfF1H
+P+Y5xDOj8yRpC756S/XOYsRBFs7+EgHjSW4P97VDyQPSiAoQ43DQEPZFDom4iWyTuo318XBg2HbyOu0L94iqpPql+kb18WzzGqKJ
+v5MmGsGHCaVulERBVI+hC+MVx91FMmiGHSgYfSU2WVQ1um6kK9xHrcBHp5ENalNRBp6LmUYbnOWd150Qafm0ImiGRD446TDi7Jkp
+Gms1vnH9M2VJVM1MXDxmfXLndqNC+9hAX2u4t7cjvIe3Py+yqNFwLzQxRvaMfkC5Z0X9N+2k0hX1D/QJs8uwRYW2giy8BxTpnYwc
+eIWTQzhCRk97hH/nrBSZg5GSVWTp7OuAVkm3+A1LmWEpNSwrDUs5K9oJxUCJMPzcoJLPWPgnaiUYPTu6hbGLDJJgYXTtoTfXZulm
+j27xGyb/gK5RopsiGSiJDFOEgDbAMPmHTpDTDrLwYagXs8SwrOR5ECIMVVH7YIlu+nWzVDfLeBwQQ2DcWEFv4lJhRHr6OGzr5em1
+ta8UxioeoLdEGH5hlApDRNbL641YPV4h/dwY7C8Rhqiz/jJh8EgHRaSD7cJLe7kwhM/2UmGIAHoubhRv5EzvWjBFJjiTXaT3W/Zf
++c3Xz2NoYp291hzfz2rcicN/i2f88f0P19Ki/lOX8FcQ90f7OjbR3o7YJfyVxf3Rfo76t+PnvGb5uyqeP1q3Xj/Gr679dX81cX90
+n1HNW5Ibi5+xYXXxdOkepDo8yoZLxNcc90f3oQa9UhxMugfxQ/F0aZ2/dlS/Iy8xvk7dn0nc37LeptdVor9dkj/Es57i6rpEunvj
+6dJ+lQ20Rt9yifhujfujfRwbN+h1n+jvE3F/dD/GRtojMXAJf/fN+OP3tlYfiO+HnuXvL3V/qrjPtfrthPYw7A/PxMfveS13McYW
+XMLf5+P+6Pz0yr3xeyBm+XtqJl1+L2zZhcuk+yXJH/oo34N0KX/PS/6wr7zs/GX8fT2ePzoPW9F8mfzF4v7oHDa/++tS/r4744/f
+R1uVfZn+/EPJH/pTVcFl8ve65A9lqno+od2M+H4m+cM+l6qXLhPfxXg5aP/R1TQmX/p1fwqL+6N9Z9e8dGm6odji/uh+3PLPJ9SL
+nj/FFfdH9+auqrl0/mbutdTEfbqrpHNbs+LLkdoN5agIXSa+5TP9gN+/W3niMv5K4+OD7uWtGbh0+yprZuLj9/U2HLpMfDWSP+xr
+a3j6Mv42x/NH9/tWBy7j7/o4XaN7f/ndv5fKX2vcH90HXO+6jL/tcX90T3D9hsv42xX3R/cH8zuGL+Xvxnh70L3C/C6/S/n7WNwf
+3TdctuDS9Fm5Pd6f6R7iwHuX8Tci+cN+q8qehPoz/En0j+4trpm4jL+/jOeP7jNee+Ey6T4cpy90z/FVtFlt9BLlPRiPj+4/Xn2C
+6fdjJ/TnI5I/hFmTr8/diel+QfIH2rxm4DL5eyaeP7pHeW00gW4Y/r4c90f3K18VjZ+bnJW/b0rpYl/lmo9dxt/JuD+6j5nfsahe
+wt/LcX90T3PFVy9TjjNxf3R/85VvXCa+85I/zKmr2y/j72fx8tJ9z2vmXYa+TEn5Q7tVnLhMf/lPyR/m+wrKR/uv9wPVLOUPZ3Ov
+fPPS5VWTJH9oiysvxM+VzYrPI7UH5o7Vhy6dP1Wip3T/9Opjl0k3W/IH4Wb12cv4WxofR3RfdXXjpetPLYzzEXSPdXXLpemaOsNP
+iv2mliE2c6/vLH9r4/5Gjatrey7hrypeDroP++quS9Mh9doZf3wf7ZIhYz9nwnypzK6HIMZkOQXYJO6A5f5c+t8AMMX93YlxNb/5
+Evyfe7a/R8CLqU2J/v4/oFw67A==
 ''',
-    modules={
-        'inventory_disc': r'''#!/usr/bin/env python3
-"""List files in the first Mode 1/2352 track of a cue/bin disc image."""
-
-from __future__ import annotations
-
-import argparse
-import re
-import sys
-from pathlib import Path
-
-RAW_SECTOR_SIZE = 2352
-USER_DATA_OFFSET = 16
-LOGICAL_SECTOR_SIZE = 2048
-
-
-class DiscError(Exception):
-    pass
-
-
-def read_le_be(data: bytes, offset: int, width: int) -> int:
-    little = int.from_bytes(data[offset : offset + width], "little")
-    big = int.from_bytes(data[offset + width : offset + width * 2], "big")
-    if little != big:
-        raise DiscError(f"invalid dual-endian ISO field at byte {offset}")
-    return little
-
-
-def parse_record(record: bytes) -> tuple[int, int, int, bytes]:
-    if len(record) < 34 or record[0] < 34 or record[0] > len(record):
-        raise DiscError("invalid ISO9660 directory record")
-    record = record[: record[0]]
-    name_length = record[32]
-    if 33 + name_length > len(record):
-        raise DiscError("truncated ISO9660 directory name")
-    extent = read_le_be(record, 2, 4)
-    size = read_le_be(record, 10, 4)
-    return extent, size, record[25], record[33 : 33 + name_length]
-
-
-def cue_data_track(cue_path: Path) -> Path:
-    cue_text = cue_path.read_text(encoding="utf-8", errors="replace")
-    current_file: str | None = None
-    for line in cue_text.splitlines():
-        file_match = re.match(r'\s*FILE\s+"([^"]+)"\s+\w+', line, re.IGNORECASE)
-        if file_match:
-            current_file = file_match.group(1)
-            continue
-        track_match = re.match(r"\s*TRACK\s+\d+\s+(MODE1/2352)\b", line, re.IGNORECASE)
-        if track_match and current_file:
-            track_path = cue_path.parent / current_file
-            if not track_path.is_file():
-                raise DiscError(f"data track not found: {track_path}")
-            return track_path
-    raise DiscError(f"no MODE1/2352 track found in {cue_path}")
-
-
-class Iso9660:
-    def __init__(self, track_path: Path):
-        self.track_path = track_path
-        self.track = track_path.open("rb")
-        track_size = track_path.stat().st_size
-        if track_size % RAW_SECTOR_SIZE:
-            raise DiscError(f"track size is not a multiple of {RAW_SECTOR_SIZE}")
-        self.sector_count = track_size // RAW_SECTOR_SIZE
-        self._validate_volume()
-
-    def close(self) -> None:
-        self.track.close()
-
-    def read_sector(self, lba: int) -> bytes:
-        if lba < 0 or lba >= self.sector_count:
-            raise DiscError(f"sector {lba} is outside the data track")
-        self.track.seek(lba * RAW_SECTOR_SIZE + USER_DATA_OFFSET)
-        data = self.track.read(LOGICAL_SECTOR_SIZE)
-        if len(data) != LOGICAL_SECTOR_SIZE:
-            raise DiscError(f"short read at sector {lba}")
-        return data
-
-    def read_extent(self, lba: int, size: int) -> bytes:
-        result = bytearray()
-        while len(result) < size:
-            result.extend(self.read_sector(lba))
-            lba += 1
-        return bytes(result[:size])
-
-    def _validate_volume(self) -> None:
-        primary = None
-        for lba in range(16, min(self.sector_count, 80)):
-            descriptor = self.read_sector(lba)
-            if descriptor[1:6] != b"CD001" or descriptor[6] != 1:
-                raise DiscError(f"invalid volume descriptor at sector {lba}")
-            if descriptor[0] == 1:
-                primary = descriptor
-            if descriptor[0] == 255:
-                break
-        if primary is None:
-            raise DiscError("no ISO9660 primary volume descriptor found")
-        self.root = parse_record(primary[156:])[:2]
-
-    @staticmethod
-    def _display_name(raw_name: bytes) -> str:
-        name = raw_name.decode("ascii", errors="replace")
-        if name.endswith("."):
-            name = name[:-1]
-        return re.sub(r";\d+$", "", name)
-
-    def files(self) -> list[tuple[str, int, int]]:
-        result: list[tuple[str, int, int]] = []
-        visited: set[tuple[int, int]] = set()
-
-        def walk(path: str, extent: int, size: int) -> None:
-            key = (extent, size)
-            if key in visited:
-                raise DiscError(f"directory cycle at {path or '/'}")
-            visited.add(key)
-            directory = self.read_extent(extent, size)
-            offset = 0
-            while offset < len(directory):
-                record_size = directory[offset]
-                if record_size == 0:
-                    offset = ((offset // LOGICAL_SECTOR_SIZE) + 1) * LOGICAL_SECTOR_SIZE
-                    continue
-                record = directory[offset : offset + record_size]
-                child_extent, child_size, flags, raw_name = parse_record(record)
-                offset += record_size
-                if raw_name in (b"\x00", b"\x01"):
-                    continue
-                name = self._display_name(raw_name)
-                child_path = f"{path}/{name}" if path else name
-                if flags & 0x02:
-                    walk(child_path, child_extent, child_size)
-                else:
-                    result.append((child_path, child_size, child_extent))
-
-        root_extent, root_size = self.root
-        walk("", root_extent, root_size)
-        return sorted(result, key=lambda item: item[0].casefold())
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("cue", type=Path, help="cue sheet containing a MODE1/2352 track")
-    args = parser.parse_args()
-
-    track_path = cue_data_track(args.cue)
-    iso = Iso9660(track_path)
-    try:
-        print(f"Cue: {args.cue}")
-        print(f"Track: {track_path} ({iso.sector_count} raw sectors)")
-        print("Size (bytes)\tLBA\tPath")
-        files = iso.files()
-        for path, size, lba in files:
-            print(f"{size}\t{lba}\t{path}")
-        total = sum(size for _, size, _ in files)
-        print(f"Files: {len(files)}; payload total: {total} bytes")
-    finally:
-        iso.close()
-    return 0
-
-
-if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except (DiscError, OSError) as error:
-        print(f"error: {error}", file=sys.stderr)
-        raise SystemExit(2)''',
-        'build_cart': r'''#!/usr/bin/env python3
-"""Build a bootable Saturn cart image (.ss) and the file -> ROM offset table.
-
-Layout (offsets from the start of CS0, 0x22000000 cache-through):
-  0x000000  boot area: IP from the disc (header + security code + area code),
-            then the payload program right after the IP
-  0x200000  original cart ROM (mpr-18811), 2 MiB, unchanged
-  0x400000  whole data track as a 2048-byte-sector image: ROM = 0x400000 + LBA * 2048
-
-The BIOS only boots a cart whose first 16 bytes are "SEGA SEGASATURN ", so the
-original ROM ("SEGASATURN DATA ...", data from 0x100 onwards) cannot stay at 0.
-"""
-
-from __future__ import annotations
-
-import argparse
-import csv
-import hashlib
-import sys
-from pathlib import Path
-
-from inventory_disc import LOGICAL_SECTOR_SIZE, DiscError, Iso9660, cue_data_track
-
-CS0_BASE = 0x22000000
-BOOT_OFFSET = 0x000000
-BOOT_AREA_SIZE = 0x200000
-CART_ROM_OFFSET = 0x200000
-CART_ROM_SIZE = 0x200000
-ISO_OFFSET = 0x400000
-CS0_SIZE = 0x2000000
-
-IP_SIZE_FIELD = 0xE0
-FIRST_READ_ADDR_FIELD = 0xF0
-SECURITY_RANGE = (0x100, 0xE00)
-# SHA-256 of the genuine security code, as checked by Mednafen (ss.cpp, IsSaturnDisc).
-SECURITY_SHA256 = "96b8ea48819cfa589f24c40aa149c224c420dccf38b730f00156efe25c9bbc8f"
-# Japanese area code block: "bra; nop; 'For JAPAN.'", then a jump to the first-read address.
-AREA_JUMP_CODE = bytes.fromhex("d001402b00090000")
-AREA_JUMP_OFFSET = 0xE20
-
-
-def read_ip(iso: Iso9660) -> bytearray:
-    head = iso.read_sector(0)
-    if head[:16] != b"SEGA SEGASATURN ":
-        raise DiscError("sector 0 is not a Saturn IP")
-    ip_size = int.from_bytes(head[IP_SIZE_FIELD : IP_SIZE_FIELD + 4], "big")
-    if not 0x1000 <= ip_size <= 0x8000:
-        raise DiscError(f"IP size 0x{ip_size:X} outside the BIOS limits 0x1000-0x8000")
-    ip = bytearray(iso.read_extent(0, ip_size))
-    start, end = SECURITY_RANGE
-    if hashlib.sha256(ip[start:end]).hexdigest() != SECURITY_SHA256:
-        raise DiscError("IP security code does not match the genuine one")
-    return ip
-
-
-def retarget_area_jump(ip: bytearray, entry: int) -> int:
-    """Point the area code's final jump at `entry`; return the previous target."""
-    code = ip[AREA_JUMP_OFFSET : AREA_JUMP_OFFSET + len(AREA_JUMP_CODE)]
-    if code != AREA_JUMP_CODE:
-        raise DiscError("unexpected area code layout, cannot retarget its jump")
-    literal = AREA_JUMP_OFFSET + len(AREA_JUMP_CODE)
-    previous = int.from_bytes(ip[literal : literal + 4], "big")
-    ip[literal : literal + 4] = entry.to_bytes(4, "big")
-    return previous
-
-
-def build_boot_area(ip: bytearray, payload: bytes, run_from_cart: bool) -> bytes:
-    payload_offset = len(ip)
-    if run_from_cart:
-        retarget_area_jump(ip, CS0_BASE + BOOT_OFFSET + payload_offset)
-    boot = bytes(ip) + payload
-    if len(boot) > BOOT_AREA_SIZE:
-        raise DiscError(f"boot area is 0x{len(boot):X} bytes, limit 0x{BOOT_AREA_SIZE:X}")
-    return boot
-
-
-def replace_files(image: bytearray, files: list[tuple[str, int, int]], replacements: list[str]) -> list[str]:
-    """Overwrite disc files in the data-track part of the image (same size only)."""
-    by_name = {name: (size, lba) for name, size, lba in files}
-    log = []
-    for spec in replacements:
-        name, sep, source = spec.partition("=")
-        if not sep or name not in by_name:
-            raise DiscError(f"--replace {spec}: expected NAME=FILE with NAME a file of the disc")
-        size, lba = by_name[name]
-        data = Path(source).read_bytes()
-        if len(data) != size:
-            raise DiscError(f"--replace {name}: {len(data)} bytes, the disc file has {size}")
-        offset = ISO_OFFSET + lba * LOGICAL_SECTOR_SIZE
-        image[offset : offset + size] = data
-        log.append(f"{name} replaced by {source} at cart 0x{CS0_BASE + offset:08X}")
-    return log
-
-
-def write_table(path: Path, files: list[tuple[str, int, int]]) -> None:
-    with path.open("w", newline="") as out:
-        writer = csv.writer(out, delimiter="\t", lineterminator="\n")
-        writer.writerow(["path", "lba", "size", "rom_offset", "cs0_address"])
-        for name, size, lba in sorted(files, key=lambda item: item[2]):
-            offset = ISO_OFFSET + lba * LOGICAL_SECTOR_SIZE
-            writer.writerow([name, lba, size, f"0x{offset:07X}", f"0x{CS0_BASE + offset:08X}"])
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("cue", type=Path, help="cue sheet of the KOF95 disc")
-    parser.add_argument("cart_rom", type=Path, help="mpr-18811 dump (2 MiB)")
-    parser.add_argument("payload", type=Path, help="program placed right after the IP")
-    parser.add_argument("output", type=Path, help="output .ss image")
-    parser.add_argument("--table", type=Path, help="write the file -> ROM offset table (TSV)")
-    parser.add_argument("--minimal", action="store_true", help="boot area only (no cart ROM, no disc data)")
-    parser.add_argument(
-        "--run-from-cart",
-        action="store_true",
-        help="make the area code jump into the payload in the cart instead of the IP first-read address",
-    )
-    parser.add_argument(
-        "--replace",
-        action="append",
-        default=[],
-        metavar="NAME=FILE",
-        help="replace a disc file in the data-track part of the image (same size), repeatable",
-    )
-    args = parser.parse_args()
-    if args.minimal and args.replace:
-        parser.error("--replace needs the data track, not --minimal")
-
-    iso = Iso9660(cue_data_track(args.cue))
-    try:
-        ip = read_ip(iso)
-        boot = build_boot_area(ip, args.payload.read_bytes(), args.run_from_cart)
-        if args.minimal:
-            image = bytearray(boot)
-        else:
-            cart_rom = args.cart_rom.read_bytes()
-            if len(cart_rom) != CART_ROM_SIZE:
-                raise DiscError(f"cart ROM is {len(cart_rom)} bytes, expected {CART_ROM_SIZE}")
-            iso_size = iso.sector_count * LOGICAL_SECTOR_SIZE
-            if ISO_OFFSET + iso_size > CS0_SIZE:
-                raise DiscError("disc data does not fit in CS0")
-            image = bytearray(ISO_OFFSET + iso_size)
-            image[BOOT_OFFSET : BOOT_OFFSET + len(boot)] = boot
-            image[CART_ROM_OFFSET : CART_ROM_OFFSET + CART_ROM_SIZE] = cart_rom
-            image[ISO_OFFSET:] = iso.read_extent(0, iso_size)
-        files = iso.files()
-        replaced = replace_files(image, files, args.replace)
-        if args.table:
-            write_table(args.table, files)
-    finally:
-        iso.close()
-
-    # 16-bit ROM: keep the image an even number of bytes.
-    if len(image) % 2:
-        image.append(0)
-    args.output.write_bytes(image)
-    for line in replaced:
-        print(line)
-    entry = int.from_bytes(ip[FIRST_READ_ADDR_FIELD : FIRST_READ_ADDR_FIELD + 4], "big")
-    print(f"{args.output}: {len(image)} bytes (0x{len(image):X}), IP 0x{len(ip):X} bytes, "
-          f"payload at cart 0x{CS0_BASE + len(ip):08X}, IP first-read address 0x{entry:08X}"
-          + (" (bypassed)" if args.run_from_cart else ""))
-    return 0
-
-
-if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except (DiscError, OSError) as error:
-        print(f"error: {error}", file=sys.stderr)
-        raise SystemExit(2)
+    mus='''
+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
 ''',
-        'patch_kof95': r'''#!/usr/bin/env python3
-"""Patch the two KOF95 programs for the all-cart image.
-
-  `0`     : the CD data-read primitives are overwritten by the sections of
-            build/cdrom.elf (src/cdrom), each one inside the window of the
-            function it replaces.
-  MM.BIN  : the accesses to the original cart ROM (mpr-18811) are moved by
-            +0x200000, where build_cart.py places it: 28 literal-pool words,
-            a pointer split in two 16-bit literals, the ENE_MV/ENE_DT
-            pointer table, two PRS pointers and the ROM build list
-            (docs/phase1_step5_patch.md).
-
-Both files are read from the disc (cue sheet) and checked by SHA-256, every
-patched word is checked against its expected original value.
-"""
-
-from __future__ import annotations
-
-import argparse
-import hashlib
-import struct
-import sys
-from pathlib import Path
-
-from inventory_disc import DiscError, Iso9660, cue_data_track
-
-ZERO_BASE = 0x0607CD80
-MM_BASE = 0x06002040
-ZERO_SHA256 = "25cf3d668ca28b766ce984049225c2558bf697a64c93d3cf60d29866b51c007a"
-MM_SHA256 = "ab938524fd6f3d2012db8e99096e3da66cd51a8dbb59a57c8859a48168d3076f"
-
-ROM_SHIFT = 0x200000
-CART_ROM_START, CART_ROM_END = 0x22000000, 0x22200000
-ROM_BIAS_68K = 0x21F80100  # 68k address -> ROM, (A & 0xFFFFFF) + bias
-
-# Functions of `0` that may be overwritten: (name, start, end).
-ZERO_WINDOWS = [
-    ("cache lookup", 0x0607D084, 0x0607D0DC),
-    ("play (Set CD Device Connection + Play Disc)", 0x060833C0, 0x0608347C),
-    ("read (Get Then Delete Sector Data loop)", 0x0608347C, 0x06083558),
-    ("copy from cache partition", 0x06085AF4, 0x06085B34),
-]
-
-# MM.BIN literal-pool words loaded by the code (docs/phase1_step4_code.md, 2.3).
-MM_POOL_WORDS = {
-    0x06002280: 0x2216D080, 0x06002304: 0x22000000, 0x06002310: 0x220000E4,
-    0x06002368: 0x22000100, 0x06007844: 0x220D1488, 0x0600B2FC: 0x2208E4D0,
-    0x0600BD30: 0x2208E2D0, 0x0600CD34: 0x2208D2D0, 0x0600CD38: 0x2208C2D0,
-    0x0600CF60: 0x22091D30, 0x0600D174: 0x220A14F0, 0x0600D290: 0x220A16F0,
-    0x0600D68C: 0x22091CF0, 0x0600D884: 0x22091CF2, 0x0600DAC0: 0x22091CF0,
-    0x0600DEA0: 0x22091CF0, 0x0600E688: 0x22091CF0, 0x0600E8CC: 0x22091CF0,
-    0x0600EC2C: 0x22091CF0, 0x0600F894: 0x22000180, 0x0600F898: 0x22000100,
-    0x0600FB04: 0x2208E5D0, 0x0600FB90: ROM_BIAS_68K, 0x06010104: ROM_BIAS_68K,
-    0x0604977C: 0x2216D080, 0x0604A2F8: 0x2216D080, 0x0604A3BC: 0x2216D080,
-    0x0604A584: 0x2216D080,
-}
-# Pointers stored in MM.BIN data.
-MM_DATA_WORDS = {
-    0x060071A0: 0x220D1488,  # 003F.PRS+8, PRS decompression structure
-    0x06007210: 0x22153888,  # 2009.PRS+8, idem
-}
-# Pointers split by the 68k translator into two 16-bit literals, each loaded by
-# mov.w @(disp,PC): address of the high half -> (high, low). Only the high half moves.
-MM_SPLIT_POINTERS = {
-    0x0600A194: (0x220A, 0x1CF0),  # BACK.BIN, loaded at 0x0600A178/0x0600A17A
-}
-# Table of 234 pointers to ENE_MV.DAT / ENE_DT.DAT records (code loads
-# 0x0605CE6C and 0x0605CED4 as bases).
-MM_ENE_TABLE = (0x0605CE6C, 234, 0x22080100, 0x2208C2D0)
-# ROM build list ("ROMHEAD.BIN" -> 0x22000000, ...), destinations of LoadFile.
-MM_BUILD_LIST = {
-    0x0605E214: 0x22000000, 0x0605E222: 0x22000100, 0x0605E236: 0x220CB0F0,
-    0x0605E248: 0x22080100, 0x0605E25A: 0x22086900, 0x0605E274: 0x2208C2D0,
-    0x0605E284: 0x22091CF0, 0x0605E294: 0x220A1CF0, 0x0605E2A6: 0x2208E5D0,
-    0x0605E2B6: 0x220D1480, 0x0605E2C6: 0x22153880, 0x0605E2D6: 0x2216D080,
-}
-
-
-def elf_sections(path: Path) -> list[tuple[str, int, bytes]]:
-    """Allocated PROGBITS sections of a 32-bit big-endian ELF: (name, address, data)."""
-    elf = path.read_bytes()
-    if elf[:4] != b"\x7fELF" or elf[4] != 1 or elf[5] != 2:
-        raise DiscError(f"{path}: not a 32-bit big-endian ELF")
-    shoff, = struct.unpack_from(">I", elf, 0x20)
-    shentsize, shnum, shstrndx = struct.unpack_from(">HHH", elf, 0x2E)
-    headers = [struct.unpack_from(">IIIIIIIIII", elf, shoff + i * shentsize) for i in range(shnum)]
-    strtab = headers[shstrndx]
-    result = []
-    for name, kind, flags, addr, offset, size, *_ in headers:
-        if kind == 1 and flags & 2 and size:  # SHT_PROGBITS, SHF_ALLOC
-            label = elf[strtab[4] + name : elf.index(b"\0", strtab[4] + name)].decode()
-            result.append((label, addr, elf[offset : offset + size]))
-    return result
-
-
-def patch_zero(zero: bytearray, sections: list[tuple[str, int, bytes]]) -> list[str]:
-    log = []
-    for name, addr, data in sections:
-        window = next((w for w in ZERO_WINDOWS if w[1] <= addr and addr + len(data) <= w[2]), None)
-        if window is None:
-            raise DiscError(f"section {name} at 0x{addr:08X} (+0x{len(data):X}) is outside the allowed windows")
-        offset = addr - ZERO_BASE
-        zero[offset : offset + len(data)] = data
-        log.append(f"0  0x{addr:08X} {name:9} 0x{len(data):03X}/0x{window[2] - window[1]:03X} bytes  {window[0]}")
-    return log
-
-
-def shift_word(mm: bytearray, addr: int, expected: int | None = None, bounds: tuple[int, int] | None = None) -> int:
-    offset = addr - MM_BASE
-    value, = struct.unpack_from(">I", mm, offset)
-    if expected is not None and value != expected:
-        raise DiscError(f"MM.BIN 0x{addr:08X}: 0x{value:08X}, expected 0x{expected:08X}")
-    if bounds is not None and not bounds[0] <= value < bounds[1]:
-        raise DiscError(f"MM.BIN 0x{addr:08X}: 0x{value:08X} outside 0x{bounds[0]:08X}-0x{bounds[1]:08X}")
-    struct.pack_into(">I", mm, offset, value + ROM_SHIFT)
-    return value
-
-
-def patch_mm(mm: bytearray) -> list[str]:
-    for addr, value in MM_POOL_WORDS.items():
-        shift_word(mm, addr, value)
-    for addr, (high, low) in MM_SPLIT_POINTERS.items():
-        shift_word(mm, addr, high << 16 | low)
-    for addr, value in MM_DATA_WORDS.items():
-        shift_word(mm, addr, value)
-    start, count, low, high = MM_ENE_TABLE
-    for index in range(count):
-        shift_word(mm, start + 4 * index, bounds=(low, high))
-    for addr, value in MM_BUILD_LIST.items():
-        shift_word(mm, addr, value)
-    return [
-        f"MM.BIN {len(MM_POOL_WORDS)} literal-pool words, {len(MM_SPLIT_POINTERS)} split pointer, "
-        f"{len(MM_DATA_WORDS)} PRS pointers, "
-        f"{count} table entries at 0x{start:08X}, {len(MM_BUILD_LIST)} build-list entries: +0x{ROM_SHIFT:X}"
-    ]
-
-
-def read_file(iso: Iso9660, name: str, sha256: str) -> bytearray:
-    entry = next(((size, lba) for path, size, lba in iso.files() if path == name), None)
-    if entry is None:
-        raise DiscError(f"{name} not found on the disc")
-    data = bytearray(iso.read_extent(entry[1], entry[0]))
-    if hashlib.sha256(data).hexdigest() != sha256:
-        raise DiscError(f"{name}: SHA-256 differs from the analysed version")
-    return data
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("cue", type=Path, help="cue sheet of the KOF95 disc")
-    parser.add_argument("elf", type=Path, help="replacement code (build/cdrom.elf)")
-    parser.add_argument("out_dir", type=Path, help="directory for the patched `0` and MM.BIN")
-    args = parser.parse_args()
-
-    iso = Iso9660(cue_data_track(args.cue))
-    try:
-        zero = read_file(iso, "0", ZERO_SHA256)
-        mm = read_file(iso, "MM.BIN", MM_SHA256)
-    finally:
-        iso.close()
-
-    log = patch_zero(zero, elf_sections(args.elf)) + patch_mm(mm)
-    args.out_dir.mkdir(parents=True, exist_ok=True)
-    (args.out_dir / "0").write_bytes(zero)
-    (args.out_dir / "MM.BIN").write_bytes(mm)
-    print("\n".join(log))
-    print(f"-> {args.out_dir / '0'}, {args.out_dir / 'MM.BIN'}")
-    return 0
-
-
-if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except (DiscError, OSError) as error:
-        print(f"error: {error}", file=sys.stderr)
-        raise SystemExit(2)
-''',
-    },
-)
-
-VERSIONS['noloading'] = dict(
-    sha=('6e8e55c433accdf24612097780e1d9c8932deb0d15c7a0637bc8e52d625d2c91', '6e8e55c433accdf24612097780e1d9c8932deb0d15c7a0637bc8e52d625d2c91'),
-    boot='''
-eNoBPADD/9EM0A0hAtEHkAshAdEG0gfTB2AWQxAiAo/7cgTQA0ArAAn/3yWJAAgiQMgABgfNgAAAJ9Ql/gCwFEAf8EgxE3o=
-''',
-    elf='''
-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
+    mus_code=0x3f00000,
+    police='''
+eNqdVgGSgCAIhB/A/z97l6HBstTNOeNYEQosLIp8DIUpab2G2TOn8StT97KW4b/f9V7Xgxscb/eDxbOAfqg9q3H7J/8Mpta9Wwys
++yfHfun+hd7y/c2W9a/xMy6Rm3wOj9kC9Czdf6tTQe7gf7bDEyb7jIyfh8xvO/Q81/1V41+Iz/VtfZr0d0jDDpSf8xWwRvsH/fo9
++zLEnMUf5Q2HhLkKBX/HlOZA1sPcOflovH63fxpTZPT/xiJicewKefmP6adaLvgkPaKf8T97QH41uQzna8Zxh6L7lv2TnJMs/4E8
+mn9yc9sq6+CnEj820T6f7VvvFvNgaBw/Wh8Vtzl+ds7atUz1wb9TX5Gjvb6MBwHxmexnskme4ojyrdfwR14k/IT8WmrUrfcXqGGV
+l9p36w3KjdT330exzz76Ue7RwRP5vCdnh/pHnkZ+ST5VniX6V26b9P5hFn2H8DvYv+3YZ1D7BeIr0ANb/QMPpB569lde/623qlD/
+d39s9g08yuNP+tsLD1D8cx+k+kM6eWCnkB+7fDJ2SvyTj/yY7i+M553vnzlg0j/7G6kpcv85pJBxFpP3BsDun8bvnxZ353+OH+El
+HKs=
 ''',
     modules={
         'inventory_disc': r'''#!/usr/bin/env python3
@@ -1120,6 +826,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import struct
 import sys
 from pathlib import Path
@@ -1133,7 +840,11 @@ MM_SHA256 = "ab938524fd6f3d2012db8e99096e3da66cd51a8dbb59a57c8859a48168d3076f"
 
 ROM_SHIFT = 0x200000
 CART_ROM_START, CART_ROM_END = 0x22000000, 0x22200000
-ROM_BIAS_68K = 0x21F80100  # 68k address -> ROM, (A & 0xFFFFFF) + bias
+# ROM_CACHE=1 (environment, musique_32mio_preparation.md §29.5, experiment): the two bias literals of the 68k translator
+# (0x0600FB90, 0x06010104) point to the cached alias of the cart (0x01F8...): every ROM read of the translated code goes through
+# the SH-2 cache (16-byte lines; the ROM is never written). Unset: cache-through, as the original 0x220xxxxx pointers.
+ROM_BIAS_68K = 0x21F80100  # 68k address -> ROM, (A & 0xFFFFFF) + bias (original literal; shifted like the others)
+ROM_CACHE = os.environ.get("ROM_CACHE") == "1"   # then the two shifted bias literals lose bit 29 (0x22... -> 0x02..., cached)
 
 # Functions of `0` that may be overwritten: (name, start, end).
 ZERO_WINDOWS = [
@@ -1152,7 +863,15 @@ ZERO_WINDOWS = [
     ("dead file queue: CD block function, unreferenced (docs/archive/iter7_preload.md)", 0x0607F6C8, 0x0607F73C),
     ("dead file queue: LZSS decompressor, only reached through 0x0607F65E", 0x0607F770, 0x0607F8EC),
     ("file reader: LZSS header test, never taken (no LZSSV001 file)", 0x0607F65E, 0x0607F660),
+    # BR_MIX (docs/archive/musique_32mio_preparation.md §16): stores to SCSP slots 16/17 register 0x16 (CD input, no disc)
+    ("BR_MIX: service 0x1E, mov.w r0,@r2 to slot 16 (no branch into it)", 0x0608672A, 0x0608672C),
+    ("BR_MIX: service 0x1E, mov.w r0,@r2 to slot 17", 0x06086730, 0x06086732),
+    ("BR_MIX: CD fade 0x06086AE0, mov.w r1,@r9 and mov.w r2,@r10", 0x06086AFC, 0x06086B00),
     ("trapa #48 table: service 0x11 (docs/archive/iter8_m.md)", 0x06085EAC, 0x06085EB0),
+    ("MUS_CART: CDC Play, stub to cdv_play (docs/archive/musique_integration_plan.md §13)", 0x06084DD4, 0x06084DE0),
+    ("MUS_CART: CDC Seek, stub to cdv_seek (delay slot 0x06084E90 rewritten as is)", 0x06084E90, 0x06084E9C),
+    ("MUS_CART: CDC status to r4, stub to cdv_stat", 0x06084FC8, 0x06084FD4),
+    ("MUS_CART: CDC GetStatus to r4, stub to cdv_stat (delay slot 0x06085010 rewritten as is)", 0x06085010, 0x0608501C),
     ("trapa #48 table: service 0x15 (docs/archive/iter9_rounds.md)", 0x06085EBC, 0x06085EC0),
 ]
 
@@ -1175,6 +894,7 @@ MM_WINDOWS = [
     ("background columns 0x0600AD34: loop 2 and its literals, up to 0x0600AF10", 0x0600AE54, 0x0600AF10),
     ("interrupt 0x06002880: NBG1 map copy call (0x060069B4 rewritten unchanged)", 0x060069AA, 0x060069B6),
     ("interrupt 0x06002880: literal 0x060F8400 of that call, read by 0x060069AA only", 0x06006A44, 0x06006A48),
+    ("interrupt 0x06002880, 0x06006A70: before the VDP1 draw start, 0x06006AFC-0x06006B01 (FIX_PTMR; bt from 0x06006AC4 lands on 0x06006AFC, bra from 0x06006A94 on 0x06006B02, kept)", 0x06006AFC, 0x06006B02),
     ("loader 0x0604A128: DBRA loop 0x0604A174-0x0604A184 (no branch or literal into it)", 0x0604A174, 0x0604A186),
     ("frame loop: literal 0x06006BE0, read by 0x060266D4/0x06026742/0x0602679C only (docs/archive/iter8_m.md)", 0x06026A48, 0x06026A4C),
     ("cart check: sum routine 0x0600233C, only caller bsr 0x060022EC (docs/archive/iter10_demarrage.md)", 0x0600233C, 0x0600235E),
@@ -1184,6 +904,39 @@ MM_WINDOWS = [
     ("boot list 0x0604AB3C: NOW LOADING call 0x06007934 r1 = 1 (jsr @r0; sts.l pr,@-r15)", 0x0604ABD2, 0x0604ABD6),
     ("shared wait 0x06049652: entry (count, next state), reached as a state only", 0x06049652, 0x0604965C),
     ("music dispatcher: literal 0x0602B634, read by the 8 jsr 0x0602B6DA-0x0602B8BE only (docs/archive/iter9_rounds.md)", 0x0602BA40, 0x0602BA44),
+    # BRUIT_LECTEUR (docs/archive/musique_32mio_preparation.md §13.2), as ARCADE_SON of the archive-son tag
+    ("sound command 0x060083A8: directory base mov.l 0x05A08C00,r4 at 0x060084F0", 0x060084F0, 0x060084F2),
+    ("sound command: bank bases 0x06008630 and code filter 0x06008640 (read by 0x060084EA, 0x06008560 only)", 0x06008630, 0x060086C0),
+    ("slave mixer 0x06008100: pushes before the decode loop of a voice (0x06008130-0x06008133)", 0x06008130, 0x06008134),
+    # SON_MVS (docs/archive/musique_32mio_preparation.md §19): YM2610 decoder of ARCADE_SON (archive-son tag)
+    ("voice decoder: nibble order, loop 0x06008148-0x06008158 (bsr 0x060081A8 are the only calls)", 0x06008148, 0x06008158),
+    ("voice decoder: difference 0x060081A8-0x060081CC", 0x060081A8, 0x060081CC),
+    ("voice decoder: 2nd shll of the accumulator", 0x060081F4, 0x060081F6),
+    ("voice decoder: index increments 0x060082F0 (literal 0x060081E4 only)", 0x060082F0, 0x060082F8),
+    ("voice levels 0x060085F0 (literal 0x06008558 only)", 0x060085F0, 0x06008630),
+    ("voice mix 0x060081FE-0x0600823D and pad word 0x0600823E (MIX_SAT; no load or branch into it from outside)", 0x060081FE, 0x06008240),
+    ("VBlank-OUT copies 0x06002A2A: bt 0x06002AFE of the empty list at 0x06002A30 (FIX_LISTE)", 0x06002A30, 0x06002A32),
+    ("voice mixer: slices per cycle (VOICE_SLICES)", 0x06007F46, 0x06007F48),
+    ("voice mixer: last slice, ring size (VOICE_SLICES)", 0x0600806C, 0x0600806E),
+    ("voice mixer: last slice, source size (VOICE_SLICES)", 0x06008098, 0x0600809A),
+    ("voice mixer: last slice, mix size (VOICE_SLICES)", 0x060080E4, 0x060080E6),
+    ("voice mixer: slice sizes 0x0600819A (mov.w only) and padding 0x0600819E (VOICE_SLICES)", 0x0600819A, 0x060081A0),
+    ("slave loop: literal 0x060CC002 of the command flag at 0x06007FDC (VOICE_FLAG)", 0x06007FDC, 0x06007FE0),
+    ("VDP1 builder: stub to n3_col at 0x06006DD6 (literals 0x06006DE8+ kept; no branch into 0x06006DD8-0x06006DE7) (DECOR_NBG3)", 0x06006DD6, 0x06006DE0),
+    ("frame task: literal 0x06006D30 of the call of 0x06007628 (read only by 0x06006CD8) (DECOR_NBG3)", 0x06006D30, 0x06006D34),
+    ("pad read 0x06006782: last bsr 0x06006878 and epilogue 0x060067CE-0x060067D7 (no branch into it; literals 0x060067D8+ kept) (BOT_SUPER, test image)", 0x060067CE, 0x060067D8),
+    ("voice mixer: slave slice loop, entry (target of bf 0x06008014) (VOICE_DIRECT)", 0x06007F48, 0x06007F4C),
+    ("voice mixer: slave slice loop, after the literal 0x06007F60 (read by 0x06007F3A), up to dt r12 (VOICE_DIRECT)", 0x06007F68, 0x06008012),
+    ("voice mixer: list builder 0x06008064 after its size choice, up to the literal 0x060080D0 (VOICE_DIRECT)", 0x0600806E, 0x060080D0),
+    ("voice mixer: voice pointer (VOICE_DIRECT)", 0x0600812C, 0x06008130),
+    ("voice mixer: push of the source pointer (VOICE_DIRECT)", 0x06008138, 0x0600813A),
+    ("voice mixer: pop of the source pointer (VOICE_DIRECT)", 0x06008162, 0x06008164),
+    # BACK_RAM (docs/archive/musique_32mio_preparation.md §29.1): tail of the layer parameters 0x0600A19A ([r10+0x80] = r6 ...
+    # trapa #63) -> bk_init, which redoes it; no branch or literal into 0x0600A26A-0x0600A281 (scan of MM.BIN)
+    ("layer parameters 0x0600A19A: tail 0x0600A268 -> bk_init (BACK_RAM)", 0x0600A268, 0x0600A274),
+    # PE_SAFE (docs/archive/musique_32mio_preparation.md §31): the two VBlank interrupts of the game enter through a RAM relay
+    ("VBlank-IN interrupt 0x06002810: literal 0x0600690E of its call, read by 0x06002848 only (PE_SAFE)", 0x0600287C, 0x06002880),
+    ("VBlank-OUT interrupt 0x06002880: literal 0x06006A70 of its 1st call, read by 0x060028AC only (PE_SAFE)", 0x060028E8, 0x060028EC),
 ]
 
 # Code run from the cart (.c_* sections, cached CS0 addresses), written as blobs for
@@ -1191,6 +944,7 @@ MM_WINDOWS = [
 CS0_CACHED = 0x02000000
 CART_WINDOWS = [
     ("loader code (docs/archive/iter8_a.md), end of the boot area", 0x021FC000, 0x02200000),
+    ("DECOR_NBG3 code and .r_hooks load area (musique_32mio_preparation.md §36), before the loader code", 0x021F9000, 0x021FC000),
 ]
 
 # MM.BIN literal-pool words loaded by the code (docs/archive/phase1_step4_code.md, 2.3).
@@ -1254,6 +1008,19 @@ MM_OPT_DETOURS = {
         0x060077D4: (0x369C, 0x0009), 0x060077D6: (0x6662, 0x0009),
         0x060077DC: (0xBD98, 0x0009), 0x060077DE: (0x4F22, 0x0009),
     }),
+    # VOIX_EN_PLACE (docs/archive/musique_integration_plan.md §8): bank registration 0x0604A092 -> voix_dir, which
+    # gives r8 the cart address of the bank. "mov.l @(0x0604A0E8),r0 (0x05A08C00); mov.l @r8+,r9" becomes
+    # "mov.l @(0x0604A0E8),r0 (voix_dir); jmp @r0"; the delay slot is the original "mov #-1,r4" of 0x0604A0A8, and
+    # voix_dir returns to 0x0604A0AA. The literal is read by 0x0604A0A4 only.
+    "voix_dir": (0x0604A0E8, 0x05A08C00, {0x0604A0A6: (0x6986, 0x402B)}),
+    # PRE_DECOR (docs/archive/musique_32mio_preparation.md §23.5): end of the request list reset 0x06006C54 of the tile
+    # cache -> pre_hook, which adds the prefetch requests of the AOF dojo before the producers. "mov.l @(0x0A,PC),r10;
+    # mov.l @(..),r1; mov.l @(..),r2; mov.l r1,@r9; mov.l r2,@r10" becomes "mov.l @(0x0A,PC),r0; ...; jmp @r0; nop";
+    # pre_hook does the two stores and returns like the original (lds.l @r15+,pr; rts). The literal 0x06006CD4 is read
+    # by 0x06006CA8 only; no branch enters 0x06006CA6-0x06006CB6; 0x06006C54 is called by 0x06006C0A only.
+    "pre_hook": (0x06006CD4, 0x0604AF54, {
+        0x06006CA8: (0xDA0A, 0xD00A), 0x06006CAE: (0x2912, 0x402B), 0x06006CB0: (0x2A22, 0x0009),
+    }),
 }
 # Optional 16-bit words, applied only if the ELF defines the symbol: symbol -> {address: (original, new)}, new =
 # "hi"/"lo" for the halves of the symbol's value.
@@ -1261,6 +1028,53 @@ MM_OPT_WORDS = {
     # TAUNT (docs/archive/manques_mvs.md): wait of the order screen 20 -> 120 frames (mov #20,r1 -> mov #120,r1), and
     # the target of the trapa #62 at 0x06034E38 (inline long 0x0600F35E, two words) -> taunt_stub.
     "taunt_stub": {0x0603432A: (0xE114, 0xE178), 0x06034E3A: (0x0600, "hi"), 0x06034E3C: (0xF35E, "lo")},
+    # TRAME_TOT (docs/archive/musique_32mio_preparation.md §32.7): the four trapa #62 0x0602699C just before the waits of the
+    # wanted slowdowns (inline longs at 0x0602672E, 0x0602676E, 0x06026788, 0x060267C8) -> tt_ral_stub (0x0602699C, then the
+    # frame task) ...
+    "tt_ral_stub": {0x0602672E: (0x0602, "hi"), 0x06026730: (0x699C, "lo"), 0x0602676E: (0x0602, "hi"),
+                    0x06026770: (0x699C, "lo"), 0x06026788: (0x0602, "hi"), 0x0602678A: (0x699C, "lo"),
+                    0x060267C8: (0x0602, "hi"), 0x060267CA: (0x699C, "lo")},
+    # ... and Timer 0 at line 1 instead of 30 (mov #30,r0 -> mov #1,r0 before the write to T0C 0x25FE0090, at init).
+    "tt_t0": {0x060020CA: (0xE01E, "lo")},       # mov #TT_T0,r0 (symbol value 0xE000 + line)
+    # VOIX_VRAM + N3_BORNE (docs/archive/musique_32mio_preparation.md §37): bound of the VDP2 cell allocator of 0x060076C4
+    # (mov.w literal 0x06007706, read by 0x060076EA only) 0x37FC -> N3_BORNE, over the voice bank left in the cart.
+    "n3_borne": {0x06007706: (0x37FC, "lo")},
+    # ... and the 68k VBlank (Timer 0) goes through tt_gate for its display commit 0x06026B7E-0x06026C08 (mov.l @(0x06026B84),r0;
+    # jmp @r0; nop; literal): skipped when the main loop has just done it (copy tt_corps, MM_COPIES), run there otherwise.
+    "tt_gate": {0x06026B7E: (0x931E, 0xD001), 0x06026B80: (0x33BC, 0x402B), 0x06026B82: (0x8531, 0x0009),
+                0x06026B84: (0x6131, "hi"), 0x06026B86: (0x4028, "lo")},
+}
+# Copies of the ORIGINAL MM.BIN into a cart area reserved by the ELF (symbol -> (start, end), the symbol and <symbol>_end
+# bound the area), with words replaced: {address: new word, or a symbol name for a long (its value, or the original long
+# if the symbol is absent)}. Nothing of the game is in the repository: the bytes come from the user's disc at build time.
+MM_COPIES = {
+    # TRAME_TOT (§32.7): the display commit of the 68k VBlank and its literal pool, ended by trapa #63 at 0x06026C0A; the
+    # trapa #62 0x06027E70 at 0x06026BFE goes to perdu_ok when the image counts lost frames (PERDU).
+    "tt_corps": ((0x06026B7E, 0x06026CAE), {0x06026C0A: 0xC33F, 0x06026C00: "perdu_ok"}),
+}
+# Optional literals, applied only if the ELF defines the symbol: symbol -> (address, original long); the literal gets
+# the symbol's value.
+MM_OPT_LONGS = {
+    # MUS_ESCLAVE (docs/archive/musique_integration_plan.md §10): entry of the slave loop 0x06007EC0, read by
+    # 0x06002B6C only (after the slave init 0x06002B0E and after an RTBO reset) -> mus_esclave (src/musique/jeu.s).
+    "mus_esclave": (0x06002B98, 0x06007EC0),
+    # PERDU (docs/archive/musique_32mio_preparation.md §24): target of the trapa #62 at 0x06026C0A, the lost-frame path
+    # of the VBlank (flag [0x060DA784] still 1 at 0x06026B74); inline long 0x0601485C, read by that trapa only ->
+    # perdu_stub (src/cdrom/cdrom.s), which counts in perdu_total and jumps to the original target.
+    "perdu_stub": (0x06026C0C, 0x0601485C),
+    # PERDU: target of the trapa #62 at 0x06026BFE (inline long 0x06027E70 at 0x06026C00), on the not-lost path only ->
+    # perdu_ok (counter perdu_okn); lost frames = perdu_total - perdu_okn.
+    "perdu_ok": (0x06026C00, 0x06027E70),
+    # MARGE (docs/archive/musique_32mio_preparation.md §28): literal 0x06026674 of the frame loop (jsr 0x06002518 at 0x06026638,
+    # read there only, just before the frame flag is cleared at 0x0602663E) -> marge_stub, which notes the master's FRC
+    # (end of the frame's work) and jumps to 0x06002518.
+    "marge_stub": (0x06026674, 0x06002518),
+    # TRAME_TOT (§32.7): the same literal -> tt_fin (frame task, then 0x06002518 or marge_stub, which is then not applied here).
+    "tt_fin": (0x06026674, 0x06002518),
+    # GARDE (docs/archive/musique_32mio_preparation.md §32.6): target of the trapa #62 at 0x06034D78 (creation of the six
+    # character objects of the order screen; inline long 0x0600F35E at 0x06034D7A, read by that trapa only) -> garde_stub:
+    # the animation step, then the piece table of the guards in +0x3C of the object.
+    "garde_stub": (0x06034D7A, 0x0600F35E),
 }
 # ROM build list ("ROMHEAD.BIN" -> 0x22000000, ...), destinations of LoadFile.
 MM_BUILD_LIST = {
@@ -1272,18 +1086,25 @@ MM_BUILD_LIST = {
 
 
 def elf_sections(path: Path) -> list[tuple[str, int, bytes]]:
-    """Allocated PROGBITS sections of a 32-bit big-endian ELF: (name, address, data)."""
+    """Allocated PROGBITS sections of a 32-bit big-endian ELF: (name, address, data). The address is the load address
+    (LMA, from the program headers) when it differs from the run address: .r_hooks (HOOKS_RAM) runs in RAM and is
+    stored in the cart, where boot.s copies it from."""
     elf = path.read_bytes()
     if elf[:4] != b"\x7fELF" or elf[4] != 1 or elf[5] != 2:
         raise DiscError(f"{path}: not a 32-bit big-endian ELF")
-    shoff, = struct.unpack_from(">I", elf, 0x20)
-    shentsize, shnum, shstrndx = struct.unpack_from(">HHH", elf, 0x2E)
+    phoff, shoff = struct.unpack_from(">II", elf, 0x1C)
+    phentsize, phnum, shentsize, shnum, shstrndx = struct.unpack_from(">HHHHH", elf, 0x2A)
+    segments = [struct.unpack_from(">IIIIIIII", elf, phoff + i * phentsize) for i in range(phnum)]
     headers = [struct.unpack_from(">IIIIIIIIII", elf, shoff + i * shentsize) for i in range(shnum)]
     strtab = headers[shstrndx]
     result = []
     for name, kind, flags, addr, offset, size, *_ in headers:
         if kind == 1 and flags & 2 and size:  # SHT_PROGBITS, SHF_ALLOC
             label = elf[strtab[4] + name : elf.index(b"\0", strtab[4] + name)].decode()
+            for p_type, p_offset, p_vaddr, p_paddr, p_filesz, *_ in segments:
+                if p_type == 1 and p_offset <= offset < p_offset + p_filesz:  # PT_LOAD holding the section
+                    addr = p_paddr + (offset - p_offset)
+                    break
             result.append((label, addr, elf[offset : offset + size]))
     return result
 
@@ -1333,6 +1154,10 @@ def shift_word(mm: bytearray, addr: int, expected: int | None = None, bounds: tu
 def patch_mm(mm: bytearray, symbols: dict[str, int]) -> list[str]:
     for addr, value in MM_POOL_WORDS.items():
         shift_word(mm, addr, value)
+    if ROM_CACHE:   # experiment §29.5: ROM reads of the 68k code through the SH-2 cache
+        for addr in (0x0600FB90, 0x06010104):
+            offset = addr - MM_BASE
+            struct.pack_into(">I", mm, offset, struct.unpack_from(">I", mm, offset)[0] & ~0x20000000)
     for addr, (high, low) in MM_SPLIT_POINTERS.items():
         shift_word(mm, addr, high << 16 | low)
     for addr, value in MM_DATA_WORDS.items():
@@ -1370,6 +1195,16 @@ def patch_mm(mm: bytearray, symbols: dict[str, int]) -> list[str]:
             raise DiscError(f"MM.BIN 0x{literal:08X}: 0x{value:08X}, expected 0x{original:08X}")
         struct.pack_into(">I", mm, literal - MM_BASE, symbols[symbol])
         calls.append(f"MM.BIN 0x{min(words):08X} detour -> {symbol} 0x{symbols[symbol]:08X} (literal 0x{literal:08X})")
+    for symbol, (addr, original) in MM_OPT_LONGS.items():
+        if symbol not in symbols:
+            continue
+        if symbol == "marge_stub" and "tt_fin" in symbols:
+            continue                # tt_fin takes the literal and chains to marge_stub
+        value, = struct.unpack_from(">I", mm, addr - MM_BASE)
+        if value != original:
+            raise DiscError(f"MM.BIN 0x{addr:08X}: 0x{value:08X}, expected 0x{original:08X}")
+        struct.pack_into(">I", mm, addr - MM_BASE, symbols[symbol])
+        calls.append(f"MM.BIN 0x{addr:08X} literal 0x{original:08X} -> {symbol} 0x{symbols[symbol]:08X}")
     for symbol, words in MM_OPT_WORDS.items():
         if symbol not in symbols:
             continue
@@ -1456,15 +1291,16 @@ def main() -> int:
     finally:
         iso.close()
 
+    mm_orig = bytes(mm)
     sections = elf_sections(args.elf)
-    log = patch_sections(zero, ZERO_BASE, "0", ZERO_WINDOWS, [s for s in sections if not s[0].startswith((".m_", ".c_"))])
+    log = patch_sections(zero, ZERO_BASE, "0", ZERO_WINDOWS, [s for s in sections if not s[0].startswith((".m_", ".c_", ".r_"))])
     log += patch_mm(mm, elf_symbols(args.elf))
     log += patch_sections(mm, MM_BASE, "MM.BIN", MM_WINDOWS, [s for s in sections if s[0].startswith(".m_")])
     args.out_dir.mkdir(parents=True, exist_ok=True)
     blobs = []
     symbols = elf_symbols(args.elf)
     for name, addr, data in sections:
-        if not name.startswith(".c_"):
+        if not name.startswith((".c_", ".r_")):   # .r_hooks: stored at its load address (HOOKS_RAM, boot.s copies it to RAM)
             continue
         idx = symbols.get("names_idx")
         if idx is not None and addr <= idx < addr + len(data):
@@ -1472,6 +1308,22 @@ def main() -> int:
             table, count = names_index(mm, idx, size)
             data = data[: idx - addr] + table + data[idx - addr + len(table) :]
             log.append(f"cart 0x{idx:08X} names_idx 0x{len(table):03X}/0x{size:03X} bytes  {count} names, {NAMES_BUCKETS} buckets")
+        for csym, ((c0, c1), repl) in MM_COPIES.items():
+            ca = symbols.get(csym)
+            if ca is None or not addr <= ca < addr + len(data):
+                continue
+            if symbols.get(csym + "_end", 0) - ca != c1 - c0 or (ca - c0) & 3:
+                raise DiscError(f"{csym}: area of 0x{symbols.get(csym + '_end', 0) - ca:X} bytes at 0x{ca:08X}, "
+                                f"0x{c1 - c0:X} at the same alignment expected")
+            blob = bytearray(mm_orig[c0 - MM_BASE:c1 - MM_BASE])
+            for a, v in repl.items():
+                if isinstance(v, str):
+                    if v in symbols:
+                        struct.pack_into(">I", blob, a - c0, symbols[v])
+                else:
+                    struct.pack_into(">H", blob, a - c0, v)
+            data = data[: ca - addr] + bytes(blob) + data[ca - addr + len(blob) :]
+            log.append(f"cart 0x{ca:08X} {csym}: copy of MM.BIN 0x{c0:08X}-0x{c1:08X}, {len(repl)} words replaced")
         window = next((w for w in CART_WINDOWS if w[1] <= addr and addr + len(data) <= w[2]), None)
         if window is None:
             raise DiscError(f"section {name} at 0x{addr:08X} (+0x{len(data):X}) is outside the cart windows")
@@ -2421,6 +2273,13 @@ copied as animation 0xB0 + k of bank 0x1A (the order-screen bank, tile base 0):
   - taunt_par = {FIRST, group count * 8, key}.
 Every word written is checked: anim list entries 0xB0-0xC9 must hold the filler of the bank, piece entries must be
 unused, the system area and taunt_par must be zero.
+
+GARDE (docs/archive/musique_32mio_preparation.md §32.6; the ELF defines garde_par): the 26 guards too. Animation k of bank
+0x1A, one still image in the port, becomes the guard of character k (animation 0 of bank k, looping). Bank 0x1A has only
+41 free pieces left for the 200 of the guards: they get a piece table of their own (garde_par = its absolute address,
+put in +0x3C of the object by src/cdrom garde_pas after each animation step). Their tiles follow the taunts in the same
+range and group table. The copy is then read back from the image and compared with the original, down to the ROM
+address of every tile.
 """
 from __future__ import annotations
 
@@ -2573,6 +2432,26 @@ def main() -> int:
                          range(piece_tiles(pc)[0] - 0x1000, sum(piece_tiles(pc)) - 0x1000)})
         chars.append((k, recs, frames, imgs, pieces, groups))
 
+    # GARDE: the guard of each character (animation 0 of its bank), same reading as the taunt.
+    garde = "garde_par" in sym
+    gchars = []
+    if garde:
+        for k in range(0x1A):
+            lst, pt = img.l(0x80000 + 4 * k), img.l(0x80080 + 4 * k)
+            recs = records(img, img.l(lst + 4 * anim_entry(img, k, 0)))
+            if recs[-1][0] != 0xFF or any(r[0] in (0xFA, 0xFB, 0xFC) for r in recs):
+                raise SystemExit(f"bank {k:X}: the guard is not a plain loop")
+            frames = list(dict.fromkeys(struct.unpack(">I", r[:4])[0] & 0xFFFFFF for r in recs if r[0] < 0xFA))
+            imgs = {f: image_entries(img, f) for f in frames}
+            pieces = {}
+            for ents in imgs.values():
+                for e in ents:
+                    idx = struct.unpack_from(">H", e, 4)[0] & 0x1FF
+                    pieces.setdefault(idx, piece_bytes(img, img.l(pt + 4 * idx)))
+            groups = sorted({t // 8 for pc in pieces.values() for t in
+                             range(piece_tiles(pc)[0] - 0x1000, sum(piece_tiles(pc)) - 0x1000)})
+            gchars.append((k, recs, frames, imgs, pieces, groups))
+
     # Tile range: per character, its groups in order (a piece's consecutive tiles stay consecutive).
     table, number = [], {}
     for k, *_, groups in chars:
@@ -2580,6 +2459,14 @@ def main() -> int:
         n = gtab[name][1]
         for g in groups:
             number[k, g] = FIRST + 8 * len(table)
+            table.append(group_addr(name, g) if g < n else group_addr("2009.PRS", g - n))
+    n_taunt = len(table)
+    gnumber = {}                # the guards after the taunts, in a block of their own per character
+    for k, *_, groups in gchars:
+        name = f"C{k:02X}.PAC"
+        n = gtab[name][1]
+        for g in groups:
+            gnumber[k, g] = FIRST + 8 * len(table)
             table.append(group_addr(name, g) if g < n else group_addr("2009.PRS", g - n))
     if FIRST + 8 * len(table) > 0x8000:
         raise SystemExit("tile range beyond 0x8000")
@@ -2641,6 +2528,51 @@ def main() -> int:
         struct.pack_into(">I", data, lst1a + 4 * (NEW + k) + BIAS, ra)
         log.append(f"character {k:2X}: {len(recs)} records, {len(frames)} images, {len(pieces)} pieces, "
                    f"{len(groups)} groups, animation 0x{NEW + k:02X} at ${ra:06X}")
+    # GARDE: pieces in a table of their own, images and records in the system area, entry k of bank 0x1A.
+    gptrs, g_entries, gp = [], 0, 0
+    for k, recs, frames, imgs, pieces, groups in gchars:
+        if anim_entry(img, BANK, k) != k:
+            raise SystemExit(f"bank 0x1A: animation 0x{k:02X} is not mapped to its own entry")
+        still = records(img, img.l(lst1a + 4 * k))
+        if len(still) != 2 or still[0][0] >= 0xFA or still[1][0] != 0xFE:
+            raise SystemExit(f"bank 0x1A: animation 0x{k:02X} is not the still image of the port")
+        new_slot = {}
+        for idx, pc in pieces.items():
+            first, cnt = piece_tiles(pc)
+            t = first - 0x1000
+            g, r = divmod(t, 8)
+            last_g = (t + cnt - 1) // 8
+            if cnt and gnumber[k, last_g] - gnumber[k, g] != 8 * (last_g - g):
+                raise SystemExit(f"guard of bank {k:X} piece {idx:X}: tiles not consecutive")
+            pcn = bytearray(pc)
+            struct.pack_into(">H", pcn, 2, gnumber[k, g] + r)
+            new_slot[idx] = len(gptrs)
+            gptrs.append(put(bytes(pcn)) - BIAS)
+        new_frame = {}
+        for f in frames:
+            ents = bytearray()
+            for e in imgs[f]:
+                wd = struct.unpack_from(">H", e, 4)[0]
+                ents += e[:4] + struct.pack(">H", (wd & 0xFE00) | new_slot[wd & 0x1FF])
+                g_entries += 1
+            new_frame[f] = put(bytes(ents)) - BIAS
+            if new_frame[f] >> 24:
+                raise SystemExit("image beyond the 24-bit reach")
+        rs = bytearray()
+        for r in recs:
+            if r[0] < 0xFA:
+                f = struct.unpack(">I", r[:4])[0] & 0xFFFFFF
+                rs += struct.pack(">I", (r[0] << 24) | new_frame[f]) + r[4:]
+            else:
+                rs += r
+        ra = put(bytes(rs)) - BIAS
+        struct.pack_into(">I", data, lst1a + 4 * k + BIAS, ra)
+        log.append(f"character {k:2X}: guard, {len(recs)} records, {len(frames)} images, {len(pieces)} pieces, "
+                   f"{len(groups)} groups, animation 0x{k:02X} at ${ra:06X}")
+    if garde:
+        if len(gptrs) > 0x200:
+            raise SystemExit(f"guards: {len(gptrs)} pieces, more than the 9 bits of an image entry")
+        gp = put(b"".join(struct.pack(">I", x) for x in gptrs))
     if AREA[0] + len(out) > AREA[1]:
         raise SystemExit(f"system area full: {len(out)} bytes")
     if any(data[AREA[0]:AREA[0] + len(out)]):
@@ -2661,6 +2593,52 @@ def main() -> int:
     if any(data[par:par + 12]):
         raise SystemExit("taunt_par is not empty")
     struct.pack_into(">III", data, par, FIRST, 8 * len(table), key)
+    if garde:
+        gpar = sym["garde_par"] - 0x02000000
+        if any(data[gpar:gpar + 4]):
+            raise SystemExit("garde_par is not empty")
+        struct.pack_into(">I", data, gpar, CS0 + gp)
+        # Read back: the guard now reached through entry k of bank 0x1A and the piece table of the guards must be the
+        # animation 0 of bank k: same records, same image entries, same pieces, and every tile at the same ROM address.
+        def rom(tile: int, k: int) -> int:           # original numbering: field - 0x1000 = tile of C<k>.PAC, then 2009.PRS
+            name = f"C{k:02X}.PAC"
+            g, r = divmod(tile, 8)
+            n = gtab[name][1]
+            return (group_addr(name, g) if g < n else group_addr("2009.PRS", g - n)) + 128 * r
+        v_pieces = v_tiles = 0
+        for k, recs, frames, imgs, pieces, groups in gchars:
+            pt = img.l(0x80080 + 4 * k)
+            new = records(img, img.l(lst1a + 4 * k))
+            if len(new) != len(recs):
+                raise SystemExit(f"check, guard {k:X}: {len(new)} records, {len(recs)} expected")
+            for r0, r1 in zip(recs, new):
+                if r0[0] != r1[0] or r0[4:] != r1[4:] or (r0[0] >= 0xFA and r0 != r1):
+                    raise SystemExit(f"check, guard {k:X}: record {r1.hex()} for {r0.hex()}")
+                if r0[0] >= 0xFA:
+                    continue
+                e0 = image_entries(img, struct.unpack(">I", r0[:4])[0] & 0xFFFFFF)
+                e1 = image_entries(img, struct.unpack(">I", r1[:4])[0] & 0xFFFFFF)
+                if len(e0) != len(e1):
+                    raise SystemExit(f"check, guard {k:X}: image of {len(e1)} entries, {len(e0)} expected")
+                for x0, x1 in zip(e0, e1):
+                    w0, w1 = struct.unpack_from(">H", x0, 4)[0], struct.unpack_from(">H", x1, 4)[0]
+                    if x0[:4] != x1[:4] or (w0 & 0xFE00) != (w1 & 0xFE00):
+                        raise SystemExit(f"check, guard {k:X}: image entry {x1.hex()} for {x0.hex()}")
+                    p0 = piece_bytes(img, img.l(pt + 4 * (w0 & 0x1FF)))
+                    p1 = piece_bytes(img, struct.unpack_from(">I", data, gp + 4 * (w1 & 0x1FF))[0])
+                    if p0[:2] != p1[:2] or p0[4:] != p1[4:]:
+                        raise SystemExit(f"check, guard {k:X}: piece {p1.hex()} for {p0.hex()}")
+                    f0, cnt = piece_tiles(p0)
+                    f1 = piece_tiles(p1)[0]
+                    for i in range(cnt):
+                        n1 = f1 + i - FIRST
+                        if not n_taunt * 8 <= n1 < len(table) * 8 or table[n1 // 8] + 128 * (n1 % 8) != rom(f0 - 0x1000 + i, k):
+                            raise SystemExit(f"check, guard {k:X}: tile 0x{f1 + i:04X} is not tile {f0 - 0x1000 + i} of its file")
+                    v_pieces += 1
+                    v_tiles += cnt
+        log.append(f"guards read back: {len(gchars)} animations, {v_pieces} pieces and {v_tiles} tiles followed "
+                   f"to their ROM address, 0 difference; {len(gptrs)} pieces in the table at 0x{CS0 + gp:08X}, "
+                   f"{g_entries} image entries, {len(table) - n_taunt} groups after the {n_taunt} of the taunts")
     a.out.write_bytes(data)
     print("\n".join(log))
     print(f"{n_pieces} pieces, {n_entries} image entries, {len(table)} groups: tiles 0x{FIRST:04X}-0x"
@@ -2672,19 +2650,2361 @@ def main() -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 ''',
+        'vdp2_cells': r'''#!/usr/bin/env python3
+"""VDP2_DMA (docs/archive/musique_32mio_preparation.md §25): second copy of the background tiles, in VDP2 cell order.
+
+The VDP2 path of the game (MM.BIN 0x060076C4) turns each 16x16 tile of a background group (128 bytes, VDP1 sprite
+layout: 16 rows of 8 bytes) into four 8x8 VDP2 cells of 32 bytes (rows 0-7 left halves, rows 0-7 right halves, rows
+8-15 left, rows 8-15 right: step table 0x060077A0 = 4, 60, 4, 60), one long at a time, from the precomputed tiles
+(DECOR_TABLE at 0x002000, tools/precalc_decors.py) to the VDP2 VRAM. With VDP2_DMA (src/cdrom/cdrom.s), vdp2_group
+sends the group with one SCU DMA of 1 KiB instead, from this copy.
+
+  usage: tools/vdp2_cells.py <image> [--out <image>] [--check]
+
+Reads DECOR_TABLE (12-byte entries {ROM address of the .PRS, ROM address of the tiles, tile count}, ended by a zero
+long), writes the cell copies (whole groups of 8 tiles, as read by the game) in the first free run of 0xFF of the
+image that holds them (CS1 first), aligned to 2 KiB, and CELL_TABLE at 0x002080 (same stride: {ROM address of the
+cells, tiles, 0}, ended by a zero long). In place without --out. --check only verifies an image already treated.
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import struct
+import sys
+
+ROM_BASE = 0x22000000           # ROM address of image offset 0 (CS0 cache-through); CS1 = 0x24000000 = offset 32 MiB
+TABLE_OFFSET = 0x002000
+CELL_TABLE_OFFSET = 0x002080
+TABLE_END = 0x002100
+MAX_TILES = 0xDC0               # vdp2_group's limit (tiles precomputed at most)
+TILE = 128
+ALIGN = 0x800
+
+
+def rom_to_off(a: int) -> int:
+    return (a & 0x07FFFFFF) - 0x02000000
+
+
+def off_to_rom(o: int) -> int:
+    return ROM_BASE + o
+
+
+def read_table(d: bytes, offset: int) -> list[tuple[int, int, int]]:
+    out = []
+    for i in range(offset, TABLE_END, 12):
+        a, b, c = struct.unpack_from(">III", d, i)
+        if a == 0:
+            break
+        out.append((a, b, c))
+    return out
+
+
+def cells_of(tiles: bytes) -> bytes:
+    """The 128 bytes of every tile in VDP2 cell order (what 0x0600772E-0x0600776E writes to the VRAM)."""
+    out = bytearray()
+    for t in range(0, len(tiles) // TILE * TILE, TILE):        # tile, row half, half, row, 4 bytes
+        for rh in (0, 64):
+            for hc in (0, 4):
+                for r in range(t + rh + hc, t + rh + hc + 64, 8):
+                    out += tiles[r:r + 4]
+    return bytes(out)
+
+
+def cells_game(tiles: bytes) -> bytes:
+    """The same, written as the game's loop does it (independent check): per tile, 4 cells of 8 longs, source stepping
+    by 8 inside a cell and by 4, 60, 4, 60 between cells."""
+    out = bytearray()
+    steps = (4, 60, 4, 60)
+    src = 0
+    for _ in range(len(tiles) // TILE):
+        for step in steps:
+            for row in range(8):
+                out += tiles[src + row * 8:src + row * 8 + 4]
+            src += step
+    return bytes(out)
+
+
+def free_runs(d: bytes, need: int) -> list[int]:
+    """Aligned offsets of the runs of 0xFF that hold `need` bytes, in image order (maximal runs, each tried once)."""
+    out = []
+    for m in re.finditer(rb"(?<!\xff)\xff{%d,}" % max(need, 1), d):
+        start = (m.start() + ALIGN - 1) // ALIGN * ALIGN
+        if m.end() - start >= need:
+            out.append(start)
+    return out
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("image")
+    ap.add_argument("--out")
+    ap.add_argument("--check", action="store_true", help="verify an image already treated, write nothing")
+    args = ap.parse_args()
+    d = bytearray(open(args.image, "rb").read())
+    table = read_table(d, TABLE_OFFSET)
+    if not table:
+        print("DECOR_TABLE empty", file=sys.stderr)
+        return 1
+    blobs = []
+    for prs, tiles_rom, count in table:
+        n = (min(count, MAX_TILES) + 7) & ~7
+        off = rom_to_off(tiles_rom)
+        src = bytes(d[off:off + n * TILE])
+        cells = cells_of(src)
+        head, tail = src[:8 * TILE], src[-8 * TILE:]      # independent check on the first and last group
+        assert cells[:8 * TILE] == cells_game(head) and cells[-8 * TILE:] == cells_game(tail)
+        blobs.append((prs, n, cells))
+    total = sum(len(c) for _, _, c in blobs)
+    if args.check:
+        cell_table = read_table(d, CELL_TABLE_OFFSET)
+        ok = len(cell_table) == len(blobs)
+        for (rom, n, _), (prs, want_n, cells) in zip(cell_table, blobs):
+            off = rom_to_off(rom)
+            same = n == want_n and bytes(d[off:off + len(cells)]) == cells
+            print("%s : %d tiles at 0x%08X (image 0x%07X) %s" % (prs and "%08X" % prs, n, rom, off, "ok" if same else "DIFFERENT"))
+            ok = ok and same
+        print("CELL_TABLE %s, %d bytes" % ("ok" if ok else "WRONG", total))
+        return 0 if ok else 1
+    if any(d[CELL_TABLE_OFFSET:TABLE_END]):
+        print("CELL_TABLE area 0x%06X-0x%06X not free" % (CELL_TABLE_OFFSET, TABLE_END), file=sys.stderr)
+        return 1
+    runs = free_runs(bytes(d), total)
+    cs1 = [r for r in runs if r >= (32 << 20)]
+    if not runs:
+        print("no free run of %d bytes" % total, file=sys.stderr)
+        return 1
+    base = (cs1 or runs)[0]
+    pos = base
+    entries = []
+    for prs, n, cells in blobs:
+        d[pos:pos + len(cells)] = cells
+        entries.append((off_to_rom(pos), n, 0))
+        print("%08X : %4d tiles, %6d bytes of cells at 0x%08X (image 0x%07X)" % (prs, n, len(cells), off_to_rom(pos), pos))
+        pos += len(cells)
+    assert pos - base == total and (pos - base) % 4 == 0
+    t = b"".join(struct.pack(">III", *e) for e in entries) + b"\0\0\0\0"
+    assert CELL_TABLE_OFFSET + len(t) <= TABLE_END
+    d[CELL_TABLE_OFFSET:CELL_TABLE_OFFSET + len(t)] = t
+    open(args.out or args.image, "wb").write(d)
+    print("cells: %d bytes (%.2f MiB) at image 0x%07X-0x%07X, CELL_TABLE at 0x%06X (%d entries)"
+          % (total, total / 2 ** 20, base, pos, CELL_TABLE_OFFSET, len(entries)))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+''',
+        'z80': r'''#!/usr/bin/env python3
+"""Z80 en pur Python, compté au cycle d'instruction (T-états), pour rejouer le pilote son M1 de la MVS sans MAME
+(release 2.0.0 : captures des morceaux faites chez l'utilisateur, `tools/musique/m1_capture.py`).
+
+Code original du projet (GPL-3.0-or-later). Décodage selon le découpage x/y/z/p/q des opcodes (« Decoding Z80
+opcodes », C. Dinu) ; durées des instructions = tables Zilog (UM0080), comme le cœur Z80 de MAME pour une machine sans
+état d'attente (Neo Geo). Drapeaux non documentés X/Y (bits 3 et 5) tenus comme sur le vrai Z80 pour les instructions
+courantes ; MEMPTR/Q ne sont pas émulés (seuls BIT n,(HL) et SCF/CCF en dépendent, sans effet sur un programme).
+
+L'hôte fournit : read(adr) -> octet, write(adr, octet), port_in(port16) -> octet, port_out(port16, octet).
+    cpu = Z80(read, write, port_in, port_out) ; cpu.step() exécute une instruction (ou une prise d'interruption) et
+    rend son nombre de T-états ; cpu.nmi_pending = True déclenche une NMI ; cpu.int_line = niveau de /INT (IM 1 seul
+    utilisé par le pilote, IM 0/2 traités pour la forme).
+"""
+
+FS, FZ, FY, FH, FX, FP, FN, FC = 0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01
+
+PARITE = [0] * 256
+for _v in range(256):
+    PARITE[_v] = FP if bin(_v).count('1') % 2 == 0 else 0
+SZ = [0] * 256          # S, Z, X, Y d'un résultat 8 bits
+SZP = [0] * 256
+for _v in range(256):
+    SZ[_v] = (_v & (FS | FY | FX)) | (FZ if _v == 0 else 0)
+    SZP[_v] = SZ[_v] | PARITE[_v]
+
+
+class Z80:
+    def __init__(self, read, write, port_in, port_out):
+        self.rd, self.wr, self.pin, self.pout = read, write, port_in, port_out
+        self.reset()
+        self._tables()
+
+    def reset(self):
+        self.a = self.f = self.b = self.c = self.d = self.e = self.h = self.l = 0xFF
+        self.a2 = self.f2 = self.b2 = self.c2 = self.d2 = self.e2 = self.h2 = self.l2 = 0xFF
+        self.ix = self.iy = 0xFFFF
+        self.sp = 0xFFFF
+        self.pc = 0
+        self.i = self.r = 0
+        self.iff1 = self.iff2 = 0
+        self.im = 0
+        self.halted = False
+        self.ei_delay = False
+        self.nmi_pending = False
+        self.int_line = False
+        self.int_vector = 0xFF
+        self.pc_instr = 0
+
+    # --- paires ---
+    def _bc(self): return self.b << 8 | self.c
+    def _de(self): return self.d << 8 | self.e
+    def _hl(self): return self.h << 8 | self.l
+    def _sbc(self, v): self.b, self.c = v >> 8 & 0xFF, v & 0xFF
+    def _sde(self, v): self.d, self.e = v >> 8 & 0xFF, v & 0xFF
+    def _shl(self, v): self.h, self.l = v >> 8 & 0xFF, v & 0xFF
+
+    def fetch(self):
+        v = self.rd(self.pc)
+        self.pc = (self.pc + 1) & 0xFFFF
+        return v
+
+    def fetch16(self):
+        lo = self.fetch()
+        return self.fetch() << 8 | lo
+
+    def push(self, v):
+        self.sp = (self.sp - 1) & 0xFFFF
+        self.wr(self.sp, v >> 8 & 0xFF)
+        self.sp = (self.sp - 1) & 0xFFFF
+        self.wr(self.sp, v & 0xFF)
+
+    def pop(self):
+        lo = self.rd(self.sp)
+        self.sp = (self.sp + 1) & 0xFFFF
+        hi = self.rd(self.sp)
+        self.sp = (self.sp + 1) & 0xFFFF
+        return hi << 8 | lo
+
+    def inc_r(self):
+        self.r = (self.r & 0x80) | ((self.r + 1) & 0x7F)
+
+    # --- arithmétique 8 bits ---
+    def add8(self, v, carry=0):
+        a = self.a
+        r = a + v + carry
+        rr = r & 0xFF
+        f = SZ[rr] | (FC if r > 0xFF else 0) | ((a ^ v ^ r) & FH)
+        if (~(a ^ v) & (a ^ rr)) & 0x80:
+            f |= FP
+        self.a, self.f = rr, f
+
+    def sub8(self, v, carry=0, store=True):
+        a = self.a
+        r = a - v - carry
+        rr = r & 0xFF
+        f = SZ[rr] | FN | (FC if r < 0 else 0) | ((a ^ v ^ r) & FH)
+        if ((a ^ v) & (a ^ rr)) & 0x80:
+            f |= FP
+        if store:
+            self.a, self.f = rr, f
+        else:   # CP : X et Y viennent de l'opérande
+            self.f = (f & ~(FX | FY)) | (v & (FX | FY))
+
+    def and8(self, v):
+        self.a &= v
+        self.f = SZP[self.a] | FH
+
+    def xor8(self, v):
+        self.a ^= v
+        self.f = SZP[self.a]
+
+    def or8(self, v):
+        self.a |= v
+        self.f = SZP[self.a]
+
+    def alu(self, op, v):
+        if op == 0: self.add8(v)
+        elif op == 1: self.add8(v, self.f & FC)
+        elif op == 2: self.sub8(v)
+        elif op == 3: self.sub8(v, self.f & FC)
+        elif op == 4: self.and8(v)
+        elif op == 5: self.xor8(v)
+        elif op == 6: self.or8(v)
+        else: self.sub8(v, 0, False)
+
+    def inc8(self, v):
+        r = (v + 1) & 0xFF
+        self.f = (self.f & FC) | SZ[r] | (FH if (v & 0x0F) == 0x0F else 0) | (FP if v == 0x7F else 0)
+        return r
+
+    def dec8(self, v):
+        r = (v - 1) & 0xFF
+        self.f = (self.f & FC) | SZ[r] | FN | (FH if (v & 0x0F) == 0 else 0) | (FP if v == 0x80 else 0)
+        return r
+
+    # --- 16 bits ---
+    def add16(self, a, b):
+        r = a + b
+        self.f = (self.f & (FS | FZ | FP)) | (FC if r > 0xFFFF else 0) | ((a ^ b ^ r) >> 8 & FH) | (r >> 8 & (FX | FY))
+        return r & 0xFFFF
+
+    def adc16(self, b):
+        a = self._hl()
+        c = self.f & FC
+        r = a + b + c
+        rr = r & 0xFFFF
+        f = (rr >> 8 & (FS | FX | FY)) | (FZ if rr == 0 else 0) | (FC if r > 0xFFFF else 0) | ((a ^ b ^ r) >> 8 & FH)
+        if (~(a ^ b) & (a ^ rr)) & 0x8000:
+            f |= FP
+        self.f = f
+        self._shl(rr)
+
+    def sbc16(self, b):
+        a = self._hl()
+        c = self.f & FC
+        r = a - b - c
+        rr = r & 0xFFFF
+        f = (rr >> 8 & (FS | FX | FY)) | (FZ if rr == 0 else 0) | FN | (FC if r < 0 else 0) | ((a ^ b ^ r) >> 8 & FH)
+        if ((a ^ b) & (a ^ rr)) & 0x8000:
+            f |= FP
+        self.f = f
+        self._shl(rr)
+
+    # --- rotations / décalages (préfixe CB) ---
+    def rot(self, op, v):
+        c = self.f & FC
+        if op == 0: co = v >> 7; r = (v << 1 | co) & 0xFF                    # RLC
+        elif op == 1: co = v & 1; r = (v >> 1 | co << 7) & 0xFF              # RRC
+        elif op == 2: co = v >> 7; r = (v << 1 | c) & 0xFF                   # RL
+        elif op == 3: co = v & 1; r = (v >> 1 | c << 7) & 0xFF               # RR
+        elif op == 4: co = v >> 7; r = (v << 1) & 0xFF                       # SLA
+        elif op == 5: co = v & 1; r = (v >> 1 | (v & 0x80)) & 0xFF           # SRA
+        elif op == 6: co = v >> 7; r = (v << 1 | 1) & 0xFF                   # SLL (non documentée)
+        else: co = v & 1; r = v >> 1                                         # SRL
+        self.f = SZP[r] | co
+        return r
+
+    def cond(self, y):
+        f = self.f
+        if y == 0: return not f & FZ
+        if y == 1: return bool(f & FZ)
+        if y == 2: return not f & FC
+        if y == 3: return bool(f & FC)
+        if y == 4: return not f & FP
+        if y == 5: return bool(f & FP)
+        if y == 6: return not f & FS
+        return bool(f & FS)
+
+    # --- registres par indice (B C D E H L (HL) A), avec IX/IY pour H, L ---
+    def get_r(self, i, idx=None, adr=None):
+        if i == 0: return self.b
+        if i == 1: return self.c
+        if i == 2: return self.d
+        if i == 3: return self.e
+        if i == 4: return self.h if idx is None else (getattr(self, idx) >> 8)
+        if i == 5: return self.l if idx is None else (getattr(self, idx) & 0xFF)
+        if i == 6: return self.rd(adr)
+        return self.a
+
+    def set_r(self, i, v, idx=None, adr=None):
+        if i == 0: self.b = v
+        elif i == 1: self.c = v
+        elif i == 2: self.d = v
+        elif i == 3: self.e = v
+        elif i == 4:
+            if idx is None: self.h = v
+            else: setattr(self, idx, (getattr(self, idx) & 0x00FF) | v << 8)
+        elif i == 5:
+            if idx is None: self.l = v
+            else: setattr(self, idx, (getattr(self, idx) & 0xFF00) | v)
+        elif i == 6: self.wr(adr, v)
+        else: self.a = v
+
+    def get_rp(self, p, idx=None):
+        if p == 0: return self._bc()
+        if p == 1: return self._de()
+        if p == 2: return self._hl() if idx is None else getattr(self, idx)
+        return self.sp
+
+    def set_rp(self, p, v, idx=None):
+        if p == 0: self._sbc(v)
+        elif p == 1: self._sde(v)
+        elif p == 2:
+            if idx is None: self._shl(v)
+            else: setattr(self, idx, v)
+        else: self.sp = v
+
+    def get_rp2(self, p, idx=None):
+        return (self.a << 8 | self.f) if p == 3 else self.get_rp(p, idx)
+
+    def set_rp2(self, p, v, idx=None):
+        if p == 3: self.a, self.f = v >> 8 & 0xFF, v & 0xFF
+        else: self.set_rp(p, v, idx)
+
+    def _tables(self):
+        pass
+
+    # --- interruptions ---
+    def take_interrupts(self):
+        if self.nmi_pending:
+            self.nmi_pending = False
+            self.halted = False
+            self.iff2 = self.iff1
+            self.iff1 = 0
+            self.inc_r()
+            self.push(self.pc)
+            self.pc = 0x66
+            return 11
+        if self.int_line and self.iff1 and not self.ei_delay:
+            self.halted = False
+            self.iff1 = self.iff2 = 0
+            self.inc_r()
+            if self.im == 1:
+                self.push(self.pc)
+                self.pc = 0x38
+                return 13
+            if self.im == 2:
+                self.push(self.pc)
+                v = self.i << 8 | (self.int_vector & 0xFE)
+                self.pc = self.rd(v) | self.rd((v + 1) & 0xFFFF) << 8
+                return 19
+            self.push(self.pc)                       # IM 0 : RST (opcode sur le bus, 0xFF -> RST 38)
+            self.pc = self.int_vector & 0x38
+            return 13
+        return 0
+
+    def step(self):
+        t = self.take_interrupts()
+        if t:
+            return t
+        self.ei_delay = False
+        if self.halted:
+            self.inc_r()
+            return 4
+        self.inc_r()
+        self.pc_instr = self.pc
+        op = self.fetch()
+        if op == 0xCB:
+            return self.exec_cb()
+        if op == 0xED:
+            return self.exec_ed()
+        if op == 0xDD or op == 0xFD:
+            return self.exec_index('ix' if op == 0xDD else 'iy')
+        return self.exec_main(op)
+
+    # --- table principale ---
+    def exec_main(self, op, idx=None):
+        """idx : 'ix'/'iy' sous préfixe DD/FD (HL -> IX/IY, (HL) -> (IX+d)). Rend les T-états, préfixe compris."""
+        x, y, z = op >> 6, op >> 3 & 7, op & 7
+        p, q = y >> 1, y & 1
+        pre = 4 if idx else 0
+        if x == 1:
+            if op == 0x76:                                   # HALT
+                self.halted = True
+                return 4 + pre
+            if idx and (y == 6 or z == 6):
+                adr = self._idx_adr(idx)
+                if y == 6: self.wr(adr, self.get_r(z))       # LD (IX+d),r : H, L non remplacés
+                else: self.set_r(y, self.rd(adr))
+                return 19
+            self.set_r(y, self.get_r(z, idx, self._hl()), idx, self._hl())
+            return (7 if y == 6 or z == 6 else 4) + pre
+        if x == 2:
+            if z == 6:
+                if idx:
+                    self.alu(y, self.rd(self._idx_adr(idx)))
+                    return 19
+                self.alu(y, self.rd(self._hl()))
+                return 7
+            self.alu(y, self.get_r(z, idx))
+            return 4 + pre
+        if x == 0:
+            if z == 0:
+                if y == 0: return 4 + pre                    # NOP
+                if y == 1:                                   # EX AF,AF'
+                    self.a, self.a2 = self.a2, self.a
+                    self.f, self.f2 = self.f2, self.f
+                    return 4 + pre
+                if y == 2:                                   # DJNZ
+                    d = self.fetch()
+                    self.b = (self.b - 1) & 0xFF
+                    if self.b:
+                        self.pc = (self.pc + (d - 256 if d > 127 else d)) & 0xFFFF
+                        return 13 + pre
+                    return 8 + pre
+                d = self.fetch()
+                if y == 3 or self.cond(y - 4):               # JR / JR cc
+                    self.pc = (self.pc + (d - 256 if d > 127 else d)) & 0xFFFF
+                    return 12 + pre
+                return 7 + pre
+            if z == 1:
+                if q == 0:                                   # LD rp,nn
+                    self.set_rp(p, self.fetch16(), idx)
+                    return 10 + pre
+                v = self.add16(self.get_rp(2, idx), self.get_rp(p, idx))   # ADD HL,rp
+                self.set_rp(2, v, idx)
+                return 11 + pre
+            if z == 2:
+                if q == 0:
+                    if p == 0: self.wr(self._bc(), self.a); return 7 + pre
+                    if p == 1: self.wr(self._de(), self.a); return 7 + pre
+                    if p == 2:
+                        n = self.fetch16(); v = self.get_rp(2, idx)
+                        self.wr(n, v & 0xFF); self.wr((n + 1) & 0xFFFF, v >> 8)
+                        return 16 + pre
+                    n = self.fetch16(); self.wr(n, self.a); return 13 + pre
+                if p == 0: self.a = self.rd(self._bc()); return 7 + pre
+                if p == 1: self.a = self.rd(self._de()); return 7 + pre
+                if p == 2:
+                    n = self.fetch16()
+                    self.set_rp(2, self.rd(n) | self.rd((n + 1) & 0xFFFF) << 8, idx)
+                    return 16 + pre
+                self.a = self.rd(self.fetch16()); return 13 + pre
+            if z == 3:                                       # INC/DEC rp
+                v = self.get_rp(p, idx)
+                self.set_rp(p, (v + (1 if q == 0 else -1)) & 0xFFFF, idx)
+                return 6 + pre
+            if z == 4 or z == 5:                             # INC/DEC r
+                f = self.inc8 if z == 4 else self.dec8
+                if y == 6:
+                    if idx:
+                        adr = self._idx_adr(idx)
+                        self.wr(adr, f(self.rd(adr)))
+                        return 23
+                    adr = self._hl()
+                    self.wr(adr, f(self.rd(adr)))
+                    return 11
+                self.set_r(y, f(self.get_r(y, idx)), idx)
+                return 4 + pre
+            if z == 6:                                       # LD r,n
+                if y == 6:
+                    if idx:
+                        adr = self._idx_adr(idx)
+                        self.wr(adr, self.fetch())
+                        return 19
+                    self.wr(self._hl(), self.fetch())
+                    return 10
+                self.set_r(y, self.fetch(), idx)
+                return 7 + pre
+            # z == 7 : rotations de A et divers
+            a, f = self.a, self.f
+            if y == 0:                                       # RLCA
+                c = a >> 7; self.a = (a << 1 | c) & 0xFF
+                self.f = (f & (FS | FZ | FP)) | c | (self.a & (FX | FY))
+            elif y == 1:                                     # RRCA
+                c = a & 1; self.a = (a >> 1 | c << 7) & 0xFF
+                self.f = (f & (FS | FZ | FP)) | c | (self.a & (FX | FY))
+            elif y == 2:                                     # RLA
+                c = a >> 7; self.a = (a << 1 | (f & FC)) & 0xFF
+                self.f = (f & (FS | FZ | FP)) | c | (self.a & (FX | FY))
+            elif y == 3:                                     # RRA
+                c = a & 1; self.a = (a >> 1 | (f & FC) << 7) & 0xFF
+                self.f = (f & (FS | FZ | FP)) | c | (self.a & (FX | FY))
+            elif y == 4:                                     # DAA
+                corr = 0; c = f & FC
+                if (f & FH) or (a & 0x0F) > 9: corr |= 0x06
+                if c or a > 0x99: corr |= 0x60; c = FC
+                if f & FN:
+                    h = FH if (f & FH) and (a & 0x0F) < 6 else 0
+                    r = (a - corr) & 0xFF
+                else:
+                    h = FH if (a & 0x0F) > 9 else 0
+                    r = (a + corr) & 0xFF
+                self.a = r
+                self.f = SZP[r] | c | h | (f & FN)
+            elif y == 5:                                     # CPL
+                self.a = a ^ 0xFF
+                self.f = (f & (FS | FZ | FP | FC)) | FH | FN | (self.a & (FX | FY))
+            elif y == 6:                                     # SCF
+                self.f = (f & (FS | FZ | FP)) | FC | (a & (FX | FY))
+            else:                                            # CCF
+                self.f = ((f & (FS | FZ | FP | FC)) | ((f & FC) << 4) | (a & (FX | FY))) ^ FC
+            return 4 + pre
+        # x == 3
+        if z == 0:                                           # RET cc
+            if self.cond(y):
+                self.pc = self.pop()
+                return 11 + pre
+            return 5 + pre
+        if z == 1:
+            if q == 0:                                       # POP rp2
+                self.set_rp2(p, self.pop(), idx)
+                return 10 + pre
+            if p == 0: self.pc = self.pop(); return 10 + pre                     # RET
+            if p == 1:                                       # EXX
+                self.b, self.b2 = self.b2, self.b; self.c, self.c2 = self.c2, self.c
+                self.d, self.d2 = self.d2, self.d; self.e, self.e2 = self.e2, self.e
+                self.h, self.h2 = self.h2, self.h; self.l, self.l2 = self.l2, self.l
+                return 4 + pre
+            if p == 2: self.pc = self.get_rp(2, idx); return 4 + pre              # JP (HL)
+            self.sp = self.get_rp(2, idx); return 6 + pre                        # LD SP,HL
+        if z == 2:                                           # JP cc,nn
+            n = self.fetch16()
+            if self.cond(y): self.pc = n
+            return 10 + pre
+        if z == 3:
+            if y == 0: self.pc = self.fetch16(); return 10 + pre                 # JP nn
+            if y == 2:                                       # OUT (n),A
+                n = self.fetch()
+                self.pout(self.a << 8 | n, self.a)
+                return 11 + pre
+            if y == 3:                                       # IN A,(n)
+                n = self.fetch()
+                self.a = self.pin(self.a << 8 | n)
+                return 11 + pre
+            if y == 4:                                       # EX (SP),HL
+                v = self.rd(self.sp) | self.rd((self.sp + 1) & 0xFFFF) << 8
+                hl = self.get_rp(2, idx)
+                self.wr(self.sp, hl & 0xFF); self.wr((self.sp + 1) & 0xFFFF, hl >> 8)
+                self.set_rp(2, v, idx)
+                return 19 + pre
+            if y == 5:                                       # EX DE,HL (non affecté par DD/FD)
+                self.d, self.h = self.h, self.d
+                self.e, self.l = self.l, self.e
+                return 4 + pre
+            if y == 6: self.iff1 = self.iff2 = 0; return 4 + pre                 # DI
+            self.iff1 = self.iff2 = 1; self.ei_delay = True; return 4 + pre      # EI
+        if z == 4:                                           # CALL cc,nn
+            n = self.fetch16()
+            if self.cond(y):
+                self.push(self.pc); self.pc = n
+                return 17 + pre
+            return 10 + pre
+        if z == 5:
+            if q == 0:                                       # PUSH rp2
+                self.push(self.get_rp2(p, idx))
+                return 11 + pre
+            n = self.fetch16()                               # CALL nn (p == 0 ; DD/ED/FD traités avant)
+            self.push(self.pc); self.pc = n
+            return 17 + pre
+        if z == 6:                                           # alu n
+            self.alu(y, self.fetch())
+            return 7 + pre
+        self.push(self.pc); self.pc = y * 8                  # RST
+        return 11 + pre
+
+    def _idx_adr(self, idx):
+        d = self.fetch()
+        return (getattr(self, idx) + (d - 256 if d > 127 else d)) & 0xFFFF
+
+    def exec_index(self, idx):
+        self.inc_r()
+        op = self.fetch()
+        if op == 0xCB:
+            adr = self._idx_adr(idx)
+            op2 = self.fetch()
+            x, y, z = op2 >> 6, op2 >> 3 & 7, op2 & 7
+            v = self.rd(adr)
+            if x == 1:                                       # BIT y,(IX+d)
+                r = v & (1 << y)
+                self.f = (self.f & FC) | FH | (r & FS) | (FZ | FP if r == 0 else 0) | (adr >> 8 & (FX | FY))
+                return 20
+            if x == 0: r = self.rot(y, v)
+            elif x == 2: r = v & ~(1 << y)
+            else: r = v | (1 << y)
+            self.wr(adr, r)
+            if z != 6: self.set_r(z, r)                      # copie non documentée dans un registre
+            return 23
+        if op in (0xDD, 0xFD, 0xED):                          # préfixe sans effet : rejoué
+            self.pc = (self.pc - 1) & 0xFFFF
+            return 4
+        return self.exec_main(op, idx)
+
+    def exec_cb(self):
+        self.inc_r()
+        op = self.fetch()
+        x, y, z = op >> 6, op >> 3 & 7, op & 7
+        hl = self._hl()
+        v = self.get_r(z, None, hl)
+        if x == 1:                                           # BIT
+            r = v & (1 << y)
+            self.f = (self.f & FC) | FH | (r & FS) | (FZ | FP if r == 0 else 0) | ((v if z != 6 else hl >> 8) & (FX | FY))
+            return 12 if z == 6 else 8
+        if x == 0: r = self.rot(y, v)
+        elif x == 2: r = v & ~(1 << y)
+        else: r = v | (1 << y)
+        self.set_r(z, r, None, hl)
+        return 15 if z == 6 else 8
+
+    def exec_ed(self):
+        self.inc_r()
+        op = self.fetch()
+        x, y, z = op >> 6, op >> 3 & 7, op & 7
+        p, q = y >> 1, y & 1
+        if x == 1:
+            if z == 0:                                       # IN r,(C)
+                v = self.pin(self._bc())
+                self.f = (self.f & FC) | SZP[v]
+                if y != 6: self.set_r(y, v)
+                return 12
+            if z == 1:                                       # OUT (C),r
+                self.pout(self._bc(), 0 if y == 6 else self.get_r(y))
+                return 12
+            if z == 2:
+                if q == 0: self.sbc16(self.get_rp(p))
+                else: self.adc16(self.get_rp(p))
+                return 15
+            if z == 3:
+                n = self.fetch16()
+                if q == 0:
+                    v = self.get_rp(p)
+                    self.wr(n, v & 0xFF); self.wr((n + 1) & 0xFFFF, v >> 8)
+                else:
+                    self.set_rp(p, self.rd(n) | self.rd((n + 1) & 0xFFFF) << 8)
+                return 20
+            if z == 4:                                       # NEG
+                v = self.a; self.a = 0; self.sub8(v)
+                return 8
+            if z == 5:                                       # RETN / RETI
+                self.iff1 = self.iff2
+                self.pc = self.pop()
+                return 14
+            if z == 6:
+                self.im = (0, 0, 1, 2, 0, 0, 1, 2)[y]
+                return 8
+            if y == 0: self.i = self.a; return 9                                   # LD I,A
+            if y == 1: self.r = self.a; return 9                                   # LD R,A
+            if y in (2, 3):                                  # LD A,I / LD A,R
+                self.a = self.i if y == 2 else self.r
+                self.f = (self.f & FC) | SZ[self.a] | (FP if self.iff2 else 0)
+                return 9
+            if y == 4:                                       # RRD
+                hl = self._hl(); m = self.rd(hl)
+                self.wr(hl, (self.a << 4 | m >> 4) & 0xFF)
+                self.a = (self.a & 0xF0) | (m & 0x0F)
+                self.f = (self.f & FC) | SZP[self.a]
+                return 18
+            if y == 5:                                       # RLD
+                hl = self._hl(); m = self.rd(hl)
+                self.wr(hl, (m << 4 | (self.a & 0x0F)) & 0xFF)
+                self.a = (self.a & 0xF0) | (m >> 4)
+                self.f = (self.f & FC) | SZP[self.a]
+                return 18
+            return 8                                          # NOP de ED
+        if x == 2 and y >= 4 and z <= 3:                     # instructions de bloc
+            dec = y & 1                                      # LDD, CPD, IND, OUTD
+            rep = y >= 6
+            step = -1 if dec else 1
+            if z == 0:                                       # LDI/LDD/LDIR/LDDR
+                hl, de = self._hl(), self._de()
+                v = self.rd(hl)
+                self.wr(de, v)
+                self._shl((hl + step) & 0xFFFF); self._sde((de + step) & 0xFFFF)
+                bc = (self._bc() - 1) & 0xFFFF; self._sbc(bc)
+                n = (v + self.a) & 0xFF
+                self.f = (self.f & (FS | FZ | FC)) | (FP if bc else 0) | (n & FX) | (n << 4 & FY)
+                if rep and bc:
+                    self.pc = (self.pc - 2) & 0xFFFF
+                    return 21
+                return 16
+            if z == 1:                                       # CPI/CPD/CPIR/CPDR
+                hl = self._hl()
+                v = self.rd(hl)
+                c = self.f & FC
+                self.sub8(v, 0, False)
+                r = (self.a - v) & 0xFF
+                h = self.f & FH
+                self._shl((hl + step) & 0xFFFF)
+                bc = (self._bc() - 1) & 0xFFFF; self._sbc(bc)
+                n = (r - (1 if h else 0)) & 0xFF
+                self.f = (self.f & (FS | FZ | FH | FN)) | c | (FP if bc else 0) | (n & FX) | (n << 4 & FY)
+                if rep and bc and r != 0:
+                    self.pc = (self.pc - 2) & 0xFFFF
+                    return 21
+                return 16
+            if z == 2:                                       # INI/IND/INIR/INDR
+                v = self.pin(self._bc())
+                hl = self._hl(); self.wr(hl, v); self._shl((hl + step) & 0xFFFF)
+                self.b = (self.b - 1) & 0xFF
+                self.f = SZ[self.b] | FN
+                if rep and self.b:
+                    self.pc = (self.pc - 2) & 0xFFFF
+                    return 21
+                return 16
+            hl = self._hl(); v = self.rd(hl)                 # OUTI/OUTD/OTIR/OTDR
+            self.b = (self.b - 1) & 0xFF
+            self.pout(self._bc(), v)
+            self._shl((hl + step) & 0xFFFF)
+            self.f = SZ[self.b] | FN
+            if rep and self.b:
+                self.pc = (self.pc - 2) & 0xFFFF
+                return 21
+            return 16
+        return 8                                              # NOP de ED
+''',
+        'm1_capture': r'''#!/usr/bin/env python3
+"""Capture d'un morceau MVS sans MAME : le pilote son M1 (ROM de l'utilisateur) tourne sur notre Z80 en Python
+(tools/musique/z80.py), avec ce que le pilote voit du YM2610 (minuteries, interruption, drapeaux ADPCM, « occupé »).
+Sortie au format de tools/mame/play_input.lua VGMLOG : « <secondes> <port 0|1> <reg> <val> » par écriture YM2610,
+pour tools/musique/ym2610_scsp.py. Remplace tools/musique/capture_mvs.sh (release 2.0.0 : ni MAME ni capture fournie).
+But : la même capture que MAME 0.289, à l'écriture et au cycle près (docs/archive/musique_32mio_preparation.md §34).
+
+    python3 tools/musique/m1_capture.py <kof95.zip> <code hex> <sortie ym.log> [durée s = 420] [--jusqu_a s]
+
+Modèle (MAME 0.289 : neogeo.cpp ; ymfm ymfm_opn.cpp, ymfm_adpcm.cpp, ymfm_fm.ipp ; ymfm_mame.h) :
+  Z80 4 MHz. Mémoire : M1 0x0000-0x7FFF ; fenêtres 0x8000 (16 Kio), 0xC000 (8 Kio), 0xE000 (4 Kio), 0xF000 (2 Kio)
+  choisies par la lecture des ports 0x0B, 0x0A, 0x09, 0x08 (banque = octet haut du port) ; RAM 0xF800-0xFFFF.
+  Ports : 0x00 lecture = commande du 68k (la ligne NMI retombe), écriture = valeur du verrou effacée ; 0x04-0x07 YM2610 ;
+  écriture 0x08 : NMI permise, 0x18 : interdite ; 0x0C : réponse au 68k (ignorée). NMI sur front de (commande ET permise).
+  Chaque accès au port est daté au cycle de l'accès dans l'instruction (7 pour IN/OUT (n), 8 pour IN/OUT (C), 12 pour
+  INI/OUTI) ; MAME horodate son journal 6 cycles avant.
+  YM2610 à 8 MHz, fidélité maximale de MAME : flux à 500 kHz (8 cycles Z80 par échantillon de flux), horloge FM un
+  échantillon de flux sur 9 (72 cycles), horloge ADPCM-A une horloge FM sur 3 (compteur d'enveloppe) ; ce que calcule le
+  flux n'est visible qu'une fois l'échantillon de flux produit, et une écriture n'agit que sur les échantillons pas encore
+  produits : le flux est produit jusqu'à N(t) = (t - ORIGINE) // 8 échantillons à l'instant t.
+  Minuteries (emu_timer de MAME, hors flux) : A (1024 - NA) × 72 cycles, B 16 × (256 - NB) × 72 cycles, moins
+  (horloges FM produites & 15) au chargement ; départ à l'instant de l'écriture de 0x27, rechargement exact à l'échéance ;
+  drapeaux si permis (0x27 bits 2, 3), remis par 0x27 bits 4, 5 ; /INT = drapeau A ou B. Occupé 96 cycles.
+  ADPCM-A : mise en route à la première horloge ADPCM-A non produite ; fin à la (2 × octets + 1)-ième horloge.
+  ADPCM-B : position + Δn par horloge FM (Δn relu à chaque horloge), un quartet par débordement, tampon < 3 quartets →
+  un octet, 3 quartets retirés au dernier octet, fin quand le tampon tombe à 0 ; bit 7 de l'état B recopié de la voie à
+  l'horloge FM ; remise à zéro pendant la lecture = fin.
+  Commandes : celles du BIOS au démarrage (trames 276-308, relevées dans MAME : le pilote M1 démarre là ; avant, MAME
+  exécute le pilote son du BIOS, sans effet ici), puis 0x03 (760), 0x07 (766) et le code (767), à la fin de la trame
+  ((n + 1) × 67 584 cycles). Paramètres de phase calés sur les 23 captures MAME (§34).
+"""
+import sys
+import zipfile
+
+sys.path.insert(0, __import__('os').path.dirname(__import__('os').path.abspath(__file__)))
+from z80 import Z80  # noqa: E402
+
+TRAME = 67584                      # cycles Z80 par trame (384 × 264 points à 6 MHz)
+ECH = 72                           # cycles Z80 par horloge FM du YM2610
+FLUX = 8                           # cycles Z80 par échantillon du flux de MAME (500 kHz)
+OCCUPE = 96
+HZ = 4000000
+RETARD_JOURNAL = 6                 # MAME horodate l'écriture 6 cycles avant l'accès au port
+ORIGINE = 6                        # origine (cycles) des échantillons du flux (seule valeur qui explique les 1 761 fins relevées)
+RANG_A = 1                         # rang (mod 27) des échantillons de flux portant une horloge ADPCM-A
+RANG_FM = RANG_A % 9               # rang (mod 9) des échantillons de flux portant une horloge FM
+PHASE_B = 9                        # phase (mod 16) du compteur d'horloges FM de MAME (minuterie B)
+# Ajustements relevés une fois contre les captures MAME (§34.4) : à la limite d'un échantillon du flux, MAME voit ou ne
+# voit pas une fin ADPCM-A selon son ordonnancement interne (gigue d'un échantillon, aucune règle fixe sur 9 698 fins).
+# {code: {(voie, cycle de la mise en route): décalage en échantillons de flux}} ; seulement là où le paquet en dépend.
+AJUSTEMENTS = {
+    0x22: {(0, 455076791): 15, (0, 797586027): 5, (1, 1488356950): -1},
+    0x25: {(0, 1627676871): 27},
+    0x26: {(0, 1405971786): -1},
+    0x27: {(1, 821438744): -1, (1, 1016332559): -1, (1, 1685718290): -1},
+    0x2b: {(0, 220921283): -1, (1, 878262970): -1, (0, 1022372107): -1, (1, 1095990084): -1, (0, 1253578334): -1},
+    0x2c: {(0, 1015779686): 1},
+    0x2d: {(0, 542037316): 9, (2, 822296212): 14, (1, 1266834820): 10, (2, 1644949600): -1},
+    0x2e: {(0, 1210489088): -1, (2, 1494771611): 13},
+    0x34: {(0, 975526506): -1, (2, 992210091): -1},
+    0x35: {(0, 585923742): 1, (0, 1188871648): -1},
+    0x36: {(1, 343927085): 1, (0, 1484305534): 1, (1, 1496054117): -1},
+    0x37: {(1, 189653467): -1},
+    0x38: {(1, 217901126): -1, (1, 1518960716): -1},
+}
+# Commandes du 68k (trame, code) : démarrage du BIOS (relevé MAME, sortie « SND » de play_input.lua).
+DEMARRAGE = [(276, 0x01), (279, 0x03), (301, 0x01), (301, 0x03), (301, 0x03), (308, 0x02)]
+
+
+def sim_adpcm_b(octets, repete, tours=64):
+    """Indices des débordements de position (un quartet chacun) où l'ADPCM-B lève sa fin, comme adpcm_b_channel::clock
+    d'ymfm : un octet demandé quand il reste moins de 3 quartets ; au dernier octet, 3 quartets retirés ; fin quand le
+    tampon tombe à 0 ; en répétition, l'adresse repart du début. Rend au plus `tours` fins."""
+    res = []
+    n = 0; lus = 0; k = 0
+    while len(res) < (tours if repete else 1):
+        k += 1
+        if n:
+            n -= 1
+            if n == 0:
+                res.append(k)
+                if not repete:
+                    break
+        if n < 3:
+            n += 2; lus += 1
+            if lus == octets:
+                n -= 3
+                lus = 0
+                if not repete:
+                    lus = -1 << 40                               # plus de demande utile
+        if k > 4 * octets + 64 and not res:
+            break
+    return res
+
+
+class Machine:
+    def __init__(self, m1, log):
+        self.m1 = m1
+        self.ram = bytearray(0x800)
+        self.banque = {0: 0x1E, 1: 0x0E, 2: 0x06, 3: 0x02}       # F000, E000, C000, 8000 (init_audio de MAME)
+        self.t = 0                                               # cycles Z80 depuis la mise sous tension
+        self.log = log
+        self.verrou = 0
+        self.attente = False                                     # commande en attente
+        self.nmi_ok = False
+        self.nmi_niveau = False
+        self.adr = [0]
+        self.ssg = bytearray(16)
+        self.regs = [bytearray(256), bytearray(256)]
+        self.occupe = 0
+        self.statut = 0                                          # bits 0 (A), 1 (B)
+        self.tim = [None, None]                                  # échéances (cycles) des minuteries en marche
+        self.eos = 0
+        self.masque_eos = 0xBF
+        self.adpcm_a = [None] * 6                                # instant où la fin de chaque voie ADPCM-A est visible
+        self.b_lecture = False
+        self.b_fin = None
+        self.b_vive = 0
+        self.b_bit6 = 0
+        self.b_maj = None
+        self.origine, self.rang_a, self.rang_fm, self.phase_b = ORIGINE, RANG_A, RANG_FM, PHASE_B
+        self.retard_journal = RETARD_JOURNAL
+        self.ajust = {}
+        self.cpu = Z80(self.lit, self.ecrit, self.port_lit, self.port_ecrit)
+        self.ecritures = 0
+
+    # --- mémoire ---
+    def lit(self, a):
+        if a < 0x8000: return self.m1[a]
+        if a >= 0xF800: return self.ram[a - 0xF800]
+        if a < 0xC000: return self.m1[(self.banque[3] * 0x4000 + a - 0x8000) % len(self.m1)]
+        if a < 0xE000: return self.m1[(self.banque[2] * 0x2000 + a - 0xC000) % len(self.m1)]
+        if a < 0xF000: return self.m1[(self.banque[1] * 0x1000 + a - 0xE000) % len(self.m1)]
+        return self.m1[(self.banque[0] * 0x800 + a - 0xF000) % len(self.m1)]
+
+    def ecrit(self, a, v):
+        if a >= 0xF800: self.ram[a - 0xF800] = v
+
+    # --- flux du YM2610 (MAME) ---
+    def produits(self, t):
+        """Nombre d'échantillons du flux produits à l'instant t."""
+        return (t - self.origine) // FLUX
+
+    def visible(self, s):
+        """Instant à partir duquel l'échantillon de flux s est produit (son effet visible)."""
+        return (s + 1) * FLUX + self.origine
+
+    def prochain(self, t, rang, periode):
+        """Premier échantillon de flux pas encore produit à t, de rang donné modulo la période."""
+        n = self.produits(t)
+        return n + (rang - n) % periode
+
+    # --- ports ---
+    def cycle_es(self):
+        """Cycle de l'accès au port dans l'instruction en cours : IN/OUT (n) 7, IN/OUT (C) 8, INI/OUTI et répétitions 12."""
+        pc = self.cpu.pc_instr
+        op = self.lit(pc)
+        if op == 0xED:
+            return 12 if self.lit((pc + 1) & 0xFFFF) & 0xE4 == 0xA0 else 8
+        return 7
+
+    def port_lit(self, p):
+        d = self.cycle_es()
+        self.t += d
+        try:
+            return self._port_lit(p)
+        finally:
+            self.t -= d
+
+    def port_ecrit(self, p, v):
+        d = self.cycle_es()
+        self.t += d
+        try:
+            self._port_ecrit(p, v)
+        finally:
+            self.t -= d
+
+    def _port_lit(self, p):
+        b = p & 0xFF
+        self.avance()
+        if b == 0x00:                                            # commande prise : la ligne NMI retombe
+            self.attente = False
+            self.verifie_nmi()
+            return self.verrou
+        if b == 0x04:
+            return self.statut | (0x80 if self.t < self.occupe else 0)
+        if b == 0x05:
+            r = self.adr[0]
+            return self.ssg[r] if r < 0x10 else (1 if r == 0xFF else 0)
+        if b == 0x06:
+            return self.eos & self.masque_eos
+        if b == 0x07:
+            return 0
+        if 0x08 <= b <= 0x0B:
+            self.banque[b & 3] = p >> 8
+            return 0
+        return 0xFF
+
+    def _port_ecrit(self, p, v):
+        b = p & 0xFF
+        self.avance()
+        if b == 0x00:                                            # valeur du verrou effacée (clear_w)
+            self.verrou = 0
+        elif b in (0x04, 0x06):
+            self.adr[0] = v if b == 0x04 else 0x100 | v
+        elif b in (0x05, 0x07):
+            self.ecrit_ym(b, v)
+        elif b & 0xEF == 0x08:
+            self.nmi_ok = not b & 0x10
+            self.verifie_nmi()
+
+    def verifie_nmi(self):
+        niveau = self.attente and self.nmi_ok
+        if niveau and not self.nmi_niveau:
+            self.cpu.nmi_pending = True
+        self.nmi_niveau = niveau
+
+    def commande(self, code):
+        self.verrou = code
+        self.attente = True
+        self.verifie_nmi()
+
+    # --- YM2610 ---
+    def ecrit_ym(self, port, v):
+        a = self.adr[0]
+        reg = a & 0xFF
+        haut = a >> 8
+        if (port == 0x05) == bool(haut):                         # donnée sur le port de l'autre moitié : ignorée
+            return
+        self.log.write('%.9f %d %02x %02x\n' % ((self.t - self.retard_journal) / HZ, haut, reg, v))
+        self.ecritures += 1
+        self.occupe = self.t + OCCUPE
+        self.regs[haut][reg] = v
+        if not haut:
+            if reg < 0x10:
+                self.ssg[reg] = v
+            elif reg == 0x10:
+                self.commande_b(v)
+            elif reg in (0x19, 0x1A):
+                self.delta_b()
+            elif reg == 0x1C:
+                self.masque_eos = ~v & 0xBF
+                self.eos &= ~(v & 0xBF)
+                if v & 0x80 and self.b_vive:                     # fin de l'ADPCM-B effacée dans la voie
+                    self.b_vive = 0
+                    self.b_maj = self.visible(self.prochain(self.t, self.rang_fm, 9))
+            elif reg == 0x27:
+                self.mode(v)
+        elif reg == 0x00:                                        # ADPCM-A : mise en route / arrêt des voies
+            for c in range(6):
+                if v >> c & 1:
+                    if v & 0x80:
+                        self.adpcm_a[c] = None
+                    else:
+                        r = self.regs[1]
+                        debut = r[0x18 + c] << 8 | r[0x10 + c]
+                        fin = r[0x28 + c] << 8 | r[0x20 + c]
+                        octets = ((fin + 1 - debut) & 0xFFFF) << 8
+                        s0 = self.prochain(self.t, self.rang_a, 27)
+                        self.adpcm_a[c] = self.visible(s0 + 27 * 2 * octets + self.ajust.get((c, self.t), 0))
+        self.met_irq()
+
+    # --- ADPCM-B ---
+    def commande_b(self, v):
+        """Registre 0x10 du YM2610 (bit 7 lecture, bit 4 répétition, bit 0 remise à zéro), comme ymfm."""
+        if v & 0x01:                                             # remise à zéro : arrêt ; fin levée si en lecture
+            if self.b_lecture:
+                self.b_vive = 1
+                self.b_maj = self.visible(self.prochain(self.t, self.rang_fm, 9))
+            self.b_lecture = False
+            self.b_fin = None
+            return
+        self.b_lecture = False
+        self.b_fin = None
+        if v & 0x80:
+            r = self.regs[0]
+            debut = r[0x13] << 8 | r[0x12]
+            fin = r[0x15] << 8 | r[0x14]
+            if self.b_vive:                                      # la mise en route efface la fin de la voie
+                self.b_vive = 0
+                self.b_maj = self.visible(self.prochain(self.t, self.rang_fm, 9))
+            octets = ((fin + 1 - debut) & 0xFFFF) << 8
+            self.b_lecture = True
+            self.b_rep = bool(v & 0x10)
+            self.b_dn = r[0x1A] << 8 | r[0x19]
+            self.b_pos = 0                                       # position accumulée (sans troncature)
+            self.b_suivant = self.prochain(self.t, self.rang_fm, 9)  # prochaine horloge FM non comptée
+            self.b_debordements = sim_adpcm_b(octets, self.b_rep)
+            self.b_i = 0
+            self.b_planifie()
+
+    def delta_b(self):
+        """Écriture de Δn pendant la lecture : horloges déjà produites comptées avec l'ancien Δn, puis échéance refaite."""
+        if not self.b_lecture:
+            return
+        s = self.prochain(self.t, self.rang_fm, 9)
+        if s > self.b_suivant:
+            n = (s - self.b_suivant) // 9
+            self.b_pos += self.b_dn * n
+            self.b_suivant = s
+        r = self.regs[0]
+        self.b_dn = r[0x1A] << 8 | r[0x19]
+        self.b_planifie()
+
+    def b_planifie(self):
+        if self.b_i >= len(self.b_debordements) or not self.b_dn:
+            self.b_fin = None
+            return
+        reste = self.b_debordements[self.b_i] * 65536 - self.b_pos
+        j = max(1, -(-reste // self.b_dn))                       # horloges FM encore nécessaires
+        self.b_sfin = self.b_suivant + 9 * (j - 1)
+        self.b_j = j
+        self.b_fin = self.visible(self.b_sfin)
+
+    # --- minuteries ---
+    def mode(self, v):
+        if v & 0x10: self.statut &= ~1
+        if v & 0x20: self.statut &= ~2
+        for n in (0, 1):
+            if not v >> n & 1:
+                self.tim[n] = None
+            elif self.tim[n] is None:
+                delta = 0
+                if n:                                            # horloges FM produites (total_clocks d'ymfm) & 15
+                    produites = (self.prochain(self.t, self.rang_fm, 9) - self.rang_fm) // 9
+                    delta = -((produites + self.phase_b) & 15)
+                self.tim[n] = self.t + self.periode(n, delta) * ECH
+
+    def periode(self, n, delta=0):
+        r = self.regs[0]
+        if n == 0:
+            return (1024 - (r[0x24] << 2 | (r[0x25] & 3))) + delta
+        return 16 * (256 - r[0x26]) + delta
+
+    def met_irq(self):
+        self.cpu.int_line = bool(self.statut & 3)
+
+    def avance(self):
+        """Échéances des minuteries et des fins ADPCM jusqu'à self.t."""
+        for n in (0, 1):
+            while self.tim[n] is not None and self.tim[n] <= self.t:
+                if self.regs[0][0x27] >> (2 + n) & 1:
+                    self.statut |= 1 << n
+                self.tim[n] += self.periode(n) * ECH
+        for c in range(6):
+            if self.adpcm_a[c] is not None and self.adpcm_a[c] <= self.t:
+                self.eos |= 1 << c
+                self.adpcm_a[c] = None
+        while self.b_fin is not None and self.b_fin <= self.t:   # fin de l'ADPCM-B, recopiée au même échantillon
+            self.b_vive = 1
+            self.b_maj = self.b_fin
+            self.b_i += 1
+            if self.b_rep:
+                self.b_pos += self.b_dn * self.b_j
+                self.b_suivant = self.b_sfin + 9
+                self.b_planifie()
+            else:
+                self.b_lecture = False
+                self.b_fin = None
+            self.maj_b()
+        self.maj_b()
+        self.met_irq()
+
+    def maj_b(self):
+        """Bit 7 visible de l'état B : recopie du drapeau de la voie quand il a changé (à l'horloge FM)."""
+        if self.b_maj is not None and self.b_maj <= self.t:
+            self.b_maj = None
+            if self.b_vive != self.b_bit6:
+                self.b_bit6 = self.b_vive
+                self.eos = (self.eos & 0x3F) | (0x80 if self.b_vive else 0)
+
+    def prochaine_echeance(self):
+        e = [x for x in self.tim + self.adpcm_a + [self.b_fin, self.b_maj] if x is not None]
+        return min(e) if e else None
+
+    def tourne(self, jusqu_a, commandes):
+        """Exécute jusqu'au cycle jusqu_a ; commandes : liste triée de (cycle, code)."""
+        cpu = self.cpu
+        k = 0
+        while self.t < jusqu_a:
+            while k < len(commandes) and commandes[k][0] <= self.t:
+                self.commande(commandes[k][1]); k += 1
+            self.avance()
+            if cpu.halted and not cpu.nmi_pending and not cpu.int_line:
+                prochaine = [jusqu_a]
+                if k < len(commandes): prochaine.append(commandes[k][0])
+                e = self.prochaine_echeance()
+                if e is not None: prochaine.append(e)
+                cible = max(self.t + 4, min(prochaine))
+                self.t += (cible - self.t + 3) // 4 * 4             # HALT : NOP de 4 cycles
+                continue
+            self.t += cpu.step()
+
+
+def commandes(code):
+    return sorted([((f + 1) * TRAME, c) for f, c in DEMARRAGE] + [(761 * TRAME, 0x03), (767 * TRAME, 0x07),
+                                                                    (768 * TRAME, code)])
+
+
+def main():
+    a = sys.argv[1:]
+    zp, code, sortie = a[0], int(a[1], 16), a[2]
+    duree = float(a[3]) if len(a) > 3 and not a[3].startswith('--') else 420.0
+    m1 = zipfile.ZipFile(zp).read('084-m1.m1')
+    fin = 768 * TRAME + int(duree * HZ) + 60 * TRAME
+    if '--jusqu_a' in a:
+        fin = int(float(a[a.index('--jusqu_a') + 1]) * HZ)
+    with open(sortie, 'w') as log:
+        m = Machine(m1, log)
+        m.ajust = AJUSTEMENTS.get(code, {})
+        m.tourne(fin, commandes(code))
+    print('%s : %d écritures, %.1f s' % (sortie, m.ecritures, fin / HZ))
+
+
+if __name__ == '__main__':
+    main()
+''',
+        'juke': r'''#!/usr/bin/env python3
+"""Paquet « jukebox » pour le lecteur YM2610 -> SCSP (src/musique/lecteur.c) : plusieurs morceaux, une police.
+
+    python3 tools/musique/juke.py <sortie.bin> [durée s = 420] [code ...]
+
+Morceaux : les 23 que le jeu Saturn joue (musique_integration_plan.md §6 : ni 0x3A ni 0x5F), chacun capturé seul
+par tools/musique/capture_mvs.sh (build/musique/capture/<code>/), convertis par ym2610_scsp.py --boucle (en
+parallèle) : introduction et un tour, puis reprise ; les morceaux qui s'arrêtent finissent 2 s après leur dernière
+écriture. <durée> : partie de la capture examinée.
+Format (gros-boutiste), placé en cartouche à 0x22100000 :
+  0x00 'YMJB'  0x04 nombre de morceaux  0x08 décalage de la police (96 caractères ASCII 32-127, 8×8, 4 bits : 32 o)
+  0x0C table : par morceau 8 octets = u32 décalage du .ymsc, u8 code, u8 piste CD, u16 durée (s : introduction et
+       un tour, ou jusqu'à la fin)
+  puis la police, puis les .ymsc (alignés sur 4, sans leur PCM), puis la banque PCM commune (voir commun()).
+YMSC_ADPCM=1 (MUS_ADPCM) : la banque contient l'ADPCM d'origine (octets de la ROM V) ; départs de types 1 et 2 (format
+dans ym2610_scsp.py).
+"""
+import concurrent.futures, gzip, io, os, re, struct, subprocess, sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# JUKE_CAPTURE, JUKE_VROM, JUKE_POLICE (police toute faite, 3 072 octets) : autres emplacements (script public, sans PIL)
+C = os.path.join(os.environ.get('JUKE_CAPTURE') or os.path.join(ROOT, 'build/musique/capture'), '')
+CODES = ['%02x' % c for c in list(range(0x21, 0x2F)) + [0x30, 0x31] + list(range(0x33, 0x3A))]
+V = os.environ.get('JUKE_VROM') or os.path.join(ROOT, 'build/musique/lecteur/vrom.bin')
+CONV = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ym2610_scsp.py')
+PISTE = {**{0x21 + i: 2 + i for i in range(14)}, 0x30: 16, 0x31: 17, **{0x33 + i: 18 + i for i in range(7)}}
+
+
+def police():
+    """Misc Fixed 5×7 (police X11, domaine public) dans des cases 8×8, couleur 1 sur 0"""
+    if os.environ.get('JUKE_POLICE'):
+        return open(os.environ['JUKE_POLICE'], 'rb').read()
+    from PIL import Image, ImageDraw, ImageFont, PcfFontFile
+    pcf = PcfFontFile.PcfFontFile(io.BytesIO(gzip.open('/usr/share/fonts/misc/5x7.pcf.gz').read()))
+    d = os.path.join(ROOT, 'build/musique/police', str(os.getpid()))   # un dossier par processus (essais en parallèle)
+    os.makedirs(d, exist_ok=True)
+    pcf.save(os.path.join(d, 'f'))
+    f = ImageFont.load(os.path.join(d, 'f.pil'))
+    out = bytearray()
+    for c in range(32, 128):
+        im = Image.new('1', (8, 8), 0)
+        ImageDraw.Draw(im).text((1, 0), chr(c), font=f, fill=1)
+        for y in range(8):
+            for x in range(0, 8, 2):
+                out.append((im.getpixel((x, y)) << 4) | im.getpixel((x + 1, y)))
+    return bytes(out)
+
+
+def commun(ymsc):
+    """Échantillons PCM mis en commun : rend (.ymsc sans leur PCM, avec les départs réécrits vers la banque, banque).
+    Un échantillon identique (au mot près) n'est stocké qu'une fois, son départ aligné sur 4 octets ; l'en-tête 0x0C (décalage du PCM) est mis à
+    jour par paquet() pour pointer sur la banque."""
+    banque, vus = bytearray(), {}
+    sortie = []
+    for d in ymsc:
+        d = bytearray(d)
+        off_flux, n_flux, off_pcm = struct.unpack('>III', d[4:16])
+        pcm = d[off_pcm:off_pcm + struct.unpack('>I', d[16:20])[0]]
+        i = off_flux
+        while True:
+            dt, n = struct.unpack('>HH', d[i:i + 4])
+            if dt == 0xFFFF or n == 0xFFFD:
+                break
+            i += 4
+            k = 0
+            while k < n:
+                a, = struct.unpack('>H', d[i:i + 2])
+                if (a & 0xF000) == 0x8000:
+                    typ, = struct.unpack('>H', d[i + 2:i + 4])      # 0 PCM 16 bits ; MUS_ADPCM : 1 ADPCM-A doublé, 2 ADPCM-B, 3 ADPCM-A
+                    o = (struct.unpack('>H', d[i + 4:i + 6])[0] << 16) | struct.unpack('>H', d[i + 6:i + 8])[0]
+                    m = (struct.unpack('>H', d[i + 8:i + 10])[0] << 16) | struct.unpack('>H', d[i + 10:i + 12])[0]
+                    octets = {0: 2 * m, 1: m // 4, 2: m // 2, 3: m // 2}[typ]   # A : 2 échantillons de l'anneau par quartet
+                    ech = (typ != 0, bytes(pcm[o:o + octets])) if typ else bytes(pcm[o:o + 2 * m])
+                    if ech not in vus:
+                        banque += bytes((-len(banque)) % 4)     # départs alignés sur 4 : DMA SCU (lecture +4)
+                        vus[ech] = len(banque)
+                        banque += ech[1] if isinstance(ech, tuple) else ech
+                    g = vus[ech]
+                    struct.pack_into('>HH', d, i + 4, g >> 16, g & 0xFFFF)
+                    i += 12 + (8 if typ == 2 else 0)
+                    k += 3 + (2 if typ == 2 else 0)
+                else:
+                    i += 4
+                    k += 1
+        sortie.append(bytes(d[:off_pcm]))
+    return sortie, bytes(banque)
+
+
+def paquet(morceaux, sortie):
+    """morceaux : [(chemin .ymsc, code, durée s)]"""
+    fnt = police()
+    n = len(morceaux)
+    off_pol = (0x0C + 8 * n + 3) & ~3
+    blob = bytearray(off_pol) + fnt
+    ymsc, banque = commun([open(p, 'rb').read() for p, code, dur in morceaux])
+    table = []
+    for d, (p, code, dur) in zip(ymsc, morceaux):
+        blob += bytes((-len(blob)) % 4)
+        table.append((len(blob), code, PISTE.get(code, 0), int(dur)))
+        blob += d
+    blob += bytes((-len(blob)) % 4)
+    off_banque = len(blob)
+    blob += banque
+    struct.pack_into('>4sII', blob, 0, b'YMJB', n, off_pol)
+    for i, (o, c, pi, du) in enumerate(table):
+        struct.pack_into('>IBBH', blob, 0x0C + 8 * i, o, c, pi, du)
+        struct.pack_into('>II', blob, o + 0x0C, (off_banque - o) & 0xFFFFFFFF, len(banque))   # PCM : la banque
+    open(sortie, 'wb').write(blob)
+    somme = sum(struct.unpack('>I', open(p, 'rb').read(20)[16:20])[0] for p, c, du in morceaux)
+    print('banque PCM commune : %.2f Mio (somme par morceau : %.2f Mio)' % (len(banque) / 2 ** 20, somme / 2 ** 20))
+    return len(blob)
+
+
+def main():
+    if sys.argv[1] == '--un':                       # python3 juke.py --un <.ymsc> <code hex> <durée> <sortie>
+        paquet([(sys.argv[2], int(sys.argv[3], 16), float(sys.argv[4]))], sys.argv[5])
+        return
+    sortie = sys.argv[1]
+    dur = float(sys.argv[2]) if len(sys.argv) > 2 else 420
+    codes = sys.argv[3:] or CODES
+    d = os.path.join(os.path.dirname(os.path.abspath(sortie)), 'ymsc')
+    os.makedirs(d, exist_ok=True)
+
+    def conv(code):
+        out = open(C + code + '/out.txt').read()
+        f = int(re.search(r'SNDSEQ f=(\d+) v=%s$' % code, out, re.M).group(1))
+        p = os.path.join(d, code + '.ymsc')
+        r = subprocess.run([sys.executable, CONV, C + code + '/ym.log', V, str(f / 59.1856), str(dur), p, '--boucle'],
+                           capture_output=True, text=True, check=True)
+        h = open(p, 'rb').read(0x30)
+        per, deb = struct.unpack('>II', h[0x28:0x30])
+        m = re.search(r'fin à ([0-9.]+) s', r.stdout)
+        duree = (deb + per) * 64 / 44100 if per else float(m.group(1)) if m else dur
+        return code, p, r.stdout.strip(), duree
+    with concurrent.futures.ThreadPoolExecutor(8) as ex:
+        res = list(ex.map(conv, codes))
+    for code, p, msg, du in res:
+        print('0x' + code + ' : ' + (msg.split(' : ', 1)[1] if ' : ' in msg else msg))
+    taille = paquet([(p, int(code, 16), du) for code, p, msg, du in res], sortie)
+    print('%s : %d morceaux, %.2f Mio' % (sortie, len(res), taille / 2 ** 20))
+
+
+if __name__ == '__main__':
+    main()
+''',
+        'ym2610_scsp': r'''#!/usr/bin/env python3
+"""YM2610 (Neo Geo) -> SCSP (Saturn) : convertit un journal d'écritures YM2610 en flux d'écritures SCSP.
+
+    python3 ym2610_scsp.py <ym.log> <vrom.bin> <t0 s> <durée s> <sortie.ymsc> [--sans fm,a,b] [--boucle]
+
+Toute la conversion est faite ici, à la construction ; le lecteur Saturn (src/musique/lecteur.c) ne fait qu'écrire
+les registres au bon moment et remplir les anneaux PCM des voies ADPCM.
+
+Entrées
+  ym.log    tools/mame/play_input.lua, VGMLOG : "<secondes> <port 0|1> <reg hex> <val hex>" pour chaque écriture
+  vrom.bin  ROM V de la MVS à plat (ADPCM-A et ADPCM-B, adresses YM2610)
+  t0        début du morceau (s, temps MAME) ; l'état des registres avant t0 est rejoué sans rien émettre
+  durée     longueur extraite (s)
+  --sans    composantes coupées (essais de réglage des niveaux)
+  --boucle  point de boucle cherché dans le journal (boucle_ym.py) : le flux garde l'introduction et un seul tour,
+            puis un bloc de reprise ; sans boucle (le morceau s'arrête), le flux finit 2 s après la dernière écriture
+
+Correspondance (docs/archive/musique_cartouche_mesures.md §6)
+  FM : 4 voies (port 0 voies 1-2, port 1 voies 1-2) × 4 opérateurs. Opérateur k (S1..S4) de la voie c en voie SCSP
+       BASE_FM[k] + c (S1 6-9, S2 11-14, S3 18-21, S4 23-26 : ni 0-5, voies du jeu, ni 16-17, entrée CD écrite par le
+       jeu) : un modulateur est toujours au moins 5 voies avant sa cible, sa sortie de l'échantillon courant est déjà
+       dans la pile (Mednafen scsp.inc : la pile est écrite avec 4 voies de retard). Rétroaction de S1 : ses deux
+       sorties précédentes (MDXSL 0x20, MDYSL 0x00). Entrée inutilisée : la voie 31, toujours muette.
+       Onde : sinusoïde de 1024 échantillons, 4 copies (les décalages de modulation vont de -1024 à +1023).
+       MDL 13 = ±4 tours pour une entrée pleine (ymfm : sortie 14 bits >> 1 sur une phase de 10 bits) ;
+       rétroaction MDL 4 + FB (ymfm : (a + b) >> (10 - FB)).
+       Vitesses d'enveloppe : SCSP R ≈ (2 R + ks) / 2 (même échelle Yamaha, 44,1 kHz contre 18,5 kHz) ; la
+       sensibilité au clavier est intégrée ici à chaque note, KRS ne sert qu'à rendre l'attaque 31 instantanée.
+  ADPCM-A : 6 voies, voies SCSP 10, 15, 22, 27, 28, 29. ADPCM-B : voie 30. Échantillons décodés ici en PCM 16 bits
+       (algorithmes ymfm), joués en boucle dans un anneau de 8192 échantillons rempli par le lecteur.
+
+Sortie .ymsc (gros-boutiste)
+  0x00 'YMSC'   0x04 décalage du flux   0x08 taille du flux   0x0C décalage PCM   0x10 taille PCM
+  0x14 base de l'onde FM en RAM son   0x18 base des anneaux en RAM son   0x1C décalage de l'onde
+  0x20 taille de l'onde (mots : 4 × 1024 puis 10 × 256)   0x24 reprise de la boucle (octets dans le flux, 0 : aucune)
+  0x28 période de la boucle (tranches)   0x2C début de la boucle (tranches)
+  flux : blocs [u16 Δtranches][u16 n] puis n mots doubles (u16 a, u16 v) ; une tranche = 64 échantillons à 44,1 kHz.
+    a < 0x0430        écrire v au registre SCSP 0x25B00000 + a
+    a = 0x8000 | voie départ PCM : les deux mots suivants donnent le décalage (octets, dans le PCM) et la longueur
+                      (échantillons) en (hi, lo) ; v = 0 : PCM 16 bits.
+                      YMSC_ADPCM=1 (MUS_ADPCM, musique_32mio_preparation.md §9.3) : le « PCM » est l'ADPCM d'origine de
+                      la ROM V (octets, alignés sur 4), décodé par le lecteur ; v = 1 : ADPCM-A, longueur = échantillons
+                      de l'anneau (2 par quartet : voie lue à 37 037 Hz, chaque échantillon doublé puis RIF de 7 points
+                      à 37 037 Hz, coefficients fixes du lecteur) ; v = 2 : ADPCM-B, longueur = quartets, puis deux
+                      mots doubles (C0, C1) (C2, 0) : RIF de 5 points pour la hauteur de la note, gain inclus, sur 2^16 ;
+                      YMSC_A_SIMPLE=1 : v = 3, ADPCM-A non doublé (18 519 Hz, longueur = quartets), RIF de 7 points
+                      1/sinc^0,6 jusqu'à 9 259 Hz (variante a7, coefficients fixes du lecteur)
+    a = 0x9000 | voie arrêt PCM
+    a = 0xA000        attendre au moins un échantillon (relance d'une touche relâchée dans la même tranche)
+  fin : bloc [0xFFFF][0]. Boucle : bloc [Δ][0xFFFD], Δ = fin du tour ; le lecteur reprend au bloc situé à la
+    reprise (son propre Δ est ignoré : il tombe sur la fin du tour).
+"""
+import math, struct, sys
+
+FS_FM = 8000000 / 144            # fréquence d'échantillonnage du YM2610 (ymfm)
+FS_A = 8000000 / 432             # ADPCM-A
+FS_SCSP = 44100
+TRANCHE = 64
+L_ONDE = 1024
+ONDE = 0x70000                   # sinusoïde (4 copies, 8 Kio) ; SA des opérateurs = ONDE + 2 * L_ONDE
+L_COURTE = 256                   # onde courte (10 copies, 5 Kio, juste après) pour les opérateurs au-delà de 11 kHz
+ONDE_COURTE = ONDE + 4 * L_ONDE * 2
+ANNEAUX = 0x40000                # 7 × 16 Kio
+VOIE_NULLE = 31
+VOIES_A = [10, 15, 22, 27, 28, 29]
+VOIE_B = 30
+BASE_FM = [6, 11, 18, 23]                        # S1..S4 ; voie SCSP de l'opérateur k de la voie c : BASE_FM[k] + c
+
+
+def slot_fm(c, k):
+    return BASE_FM[k] + c
+
+DETUNE = [
+    (0, 0, 1, 2), (0, 0, 1, 2), (0, 0, 1, 2), (0, 0, 1, 2), (0, 1, 2, 2), (0, 1, 2, 3), (0, 1, 2, 3), (0, 1, 2, 3),
+    (0, 1, 2, 4), (0, 1, 3, 4), (0, 1, 3, 4), (0, 1, 3, 5), (0, 2, 4, 5), (0, 2, 4, 6), (0, 2, 4, 6), (0, 2, 5, 7),
+    (0, 2, 5, 8), (0, 3, 6, 8), (0, 3, 6, 9), (0, 3, 7, 10), (0, 4, 8, 11), (0, 4, 8, 12), (0, 4, 9, 13),
+    (0, 5, 10, 14), (0, 5, 11, 16), (0, 6, 12, 17), (0, 6, 13, 19), (0, 7, 14, 20), (0, 8, 16, 22), (0, 8, 16, 22),
+    (0, 8, 16, 22), (0, 8, 16, 22)]
+KC_TABLE = [0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 3, 3, 3, 3, 3, 3]
+# entrées de modulation de chaque opérateur (0 = S1 ... 3 = S4) et porteuses, par algorithme
+ALGO = [
+    ({1: [0], 2: [1], 3: [2]}, [3]),
+    ({2: [0, 1], 3: [2]}, [3]),
+    ({2: [1], 3: [0, 2]}, [3]),
+    ({1: [0], 3: [1, 2]}, [3]),
+    ({1: [0], 3: [2]}, [1, 3]),
+    ({1: [0], 2: [0], 3: [0]}, [1, 2, 3]),
+    ({1: [0]}, [1, 2, 3]),
+    ({}, [0, 1, 2, 3]),
+]
+# ADPCM
+STEPS_A = [16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66, 73, 80, 88, 97, 107, 118, 130, 143, 157,
+           173, 190, 209, 230, 253, 279, 307, 337, 371, 408, 449, 494, 544, 598, 658, 724, 796, 876, 963, 1060, 1166,
+           1282, 1411, 1552]
+INC_A = [-1, -1, -1, -1, 2, 5, 7, 9]
+SCALE_B = [57, 57, 57, 57, 77, 102, 128, 153]
+
+# niveaux (réglés à l'oreille et au RMS face à MAME, voir --sans) : gain du PCM décodé et DISDL des porteuses FM
+GAIN_A = 18.3                    # PCM16 = valeur 12 bits × 15/32 × GAIN_A (vol 0) ; MAME morceau 0x24 : +13,2 dB
+GAIN_B = 0.574                   # PCM16 = accumulateur 16 bits × GAIN_B (niveau 255) ; MAME : +1,2 dB
+import os
+ADPCM = os.environ.get('YMSC_ADPCM') == '1'
+A_SIMPLE = os.environ.get('YMSC_A_SIMPLE') == '1'   # MUS_ADPCM, ADPCM-A non doublé (type 3) : §9.5
+MDL_MOD = int(os.environ.get('YMSC_MDL', '13'))           # profondeur d'une entrée de modulation
+MDL_FB = int(os.environ.get('YMSC_FB', '4'))              # rétroaction : MDL = MDL_FB + FB
+DISDL_FM = 5
+TL_PORTEUSE = 14                 # atténuation ajoutée aux porteuses FM (0,375 dB) ; MAME morceau 0x24 : -5,2 dB
+DISDL_PCM = 7
+
+
+def fir(x, fs, H, n=63):
+    """filtre x (échantillonné à fs) par la réponse H(f) (f < fs/2), RIF à phase nulle de n points, fenêtre de Hann"""
+    import numpy as np
+    m = 1024
+    f = np.arange(m // 2 + 1) * fs / m
+    h = np.fft.irfft(H(f), m)
+    h = np.roll(h, n // 2)[:n] * np.hanning(n + 2)[1:-1]
+    h /= h.sum() / H(np.zeros(1))[0]
+    return np.convolve(np.asarray(x, float), h, 'same')
+
+
+# L'ADPCM-A du YM2610 (ymfm) est tenu d'un échantillon à l'autre (réponse sinc) ; le SCSP interpole (sinc²) :
+# préaccentuation 1/sinc. Mesuré (§7) : le déficit ne vaut qu'environ 60 % de la prévision ; 1/sinc entier donnait
+# +0,7 dB à 6-8 kHz et +1,8 dB à 8-9 kHz : on applique 1/sinc^0,6. L'ADPCM-B de ymfm est interpolé puis tenu 3 échantillons de 55,5 kHz (mesure §7 : excès
+# Saturn suivant 1/sinc(f / 18 519)) : on lui applique sinc(f / 18 519).
+def h_a(f):
+    import numpy as np
+    return np.sinc(np.minimum(f, FS_A / 2) / FS_A) ** -0.6
+
+
+def h_b(f):
+    import numpy as np
+    return np.sinc(f / FS_A)
+
+
+def _sinc(x):
+    if x == 0:
+        return 1.0
+    y = math.pi * x
+    return math.sin(y) / y
+
+
+def _lstsq(rows, y):
+    """Moindres carrés par QR de Householder (peu de colonnes, plein rang), sans numpy (script public) : sur les 65 536
+    hauteurs possibles de l'ADPCM-B, coefs_b donne les mêmes entiers que numpy.linalg.lstsq."""
+    m, n = len(rows), len(rows[0])
+    a = [list(r) for r in rows]
+    b = list(y)
+    for k in range(n):
+        norm = math.sqrt(sum(a[i][k] ** 2 for i in range(k, m)))
+        if norm == 0:
+            continue
+        alpha = -norm if a[k][k] >= 0 else norm
+        v = [0.0] * m
+        v[k] = a[k][k] - alpha
+        for i in range(k + 1, m):
+            v[i] = a[i][k]
+        vv = sum(x * x for x in v[k:])
+        if vv == 0:
+            continue
+        for j in range(k, n):
+            t = sum(v[i] * a[i][j] for i in range(k, m)) * 2 / vv
+            for i in range(k, m):
+                a[i][j] -= t * v[i]
+        t = sum(v[i] * b[i] for i in range(k, m)) * 2 / vv
+        for i in range(k, m):
+            b[i] -= t * v[i]
+    c = [0.0] * n
+    for k in range(n - 1, -1, -1):
+        c[k] = (b[k] - sum(a[k][j] * c[j] for j in range(k + 1, n))) / a[k][k]
+    return c
+
+
+def coefs_b(fs):
+    """MUS_ADPCM : RIF symétrique de 5 points pour l'ADPCM-B lu à fs, cible h_b ajustée aux moindres carrés jusqu'à
+    min(fs/2, 16 kHz), gain GAIN_B inclus, sur 2^16 : (C0, C1, C2) en mots de 16 bits (C0 sans signe, C1 et C2 signés).
+    Même réglage que la mesure a7 / complet (§9-9.3 de musique_32mio_preparation.md). Sans numpy (même résultat)."""
+    fs = fs or FS_A
+    stop, num = min(fs / 2, 16000), 400
+    step = stop / (num - 1)
+    f = [i * step for i in range(num - 1)] + [stop]       # comme numpy.linspace
+    rows, y = [], []
+    for fi in f:
+        w = 2 * math.pi * fi / fs
+        rows.append((1.0, 2 * math.cos(w), 2 * math.cos(2 * w)))
+        y.append(max(_sinc(fi / FS_A), 1e-3))
+    c = _lstsq(rows, y)
+    g = int(round(GAIN_B * 65536))
+    c1, c2 = int(round(c[1] * g)), int(round(c[2] * g))
+    c0 = g - 2 * (c1 + c2)
+    assert 0 < c0 < 65536 and -32768 <= c1 < 32768 and -32768 <= c2 < 32768
+    return c0, c1 & 0xFFFF, c2 & 0xFFFF
+
+
+# MUS_ADPCM, ADPCM-A : RIF de 7 points à 37 037 Hz sur le signal doublé, cible 1/sinc(f / 37 037)^1,2 jusqu'à 16 kHz
+# (variante fid, §9.1), gain inclus, écrit en polyphase : quatre coefficients fixes, dans le lecteur (jeu.c)
+def coefs_a():
+    import numpy as np
+    fs = 2 * FS_A
+    f = np.linspace(0, 16000, 400)
+    w = 2 * np.pi * f / fs
+    M = np.stack([np.ones_like(w)] + [2 * np.cos(k * w) for k in (1, 2, 3)], 1)
+    c = np.linalg.lstsq(M, np.sinc(f / fs) ** -1.2, rcond=None)[0]
+    q = [int(round(x * 16384)) for x in c[1:]]
+    h = [16384 - 2 * sum(q)] + q                          # h0..h3 sur 2^14 (comme conv_rif.py RIF_Q=14)
+    g = 15 / 32 * GAIN_A * 65536 / 16384
+    return [int(round(x * g)) for x in (h[3], h[2] + h[1], h[0] + h[1], h[2] + h[3])]
+
+
+def decode_a(rom, s, e):
+    acc, idx, out = 0, 0, []
+    for a in range(s, e + 1):
+        b = rom[a] if a < len(rom) else 0
+        for nib in (b >> 4, b & 15):
+            d = (2 * (nib & 7) + 1) * STEPS_A[idx] // 8
+            if nib & 8:
+                d = -d
+            acc = (acc + d) & 0xFFF
+            idx = min(48, max(0, idx + INC_A[nib & 7]))
+            v = acc - 0x1000 if acc & 0x800 else acc
+            out.append(v * 15 / 32 * GAIN_A)
+    return list(fir(out, FS_A, h_a))
+
+
+def decode_b(rom, s, e, fs):
+    acc, step, out = 0, 127, []
+    for a in range(s, e + 1):
+        b = rom[a] if a < len(rom) else 0
+        for nib in (b >> 4, b & 15):
+            d = (2 * (nib & 7) + 1) * step // 8
+            if nib & 8:
+                d = -d
+            acc = min(32767, max(-32768, acc + d))
+            step = min(24576, max(127, step * SCALE_B[nib & 7] // 64))
+            out.append(acc * GAIN_B)
+    return list(fir(out, fs, h_b))
+
+
+# Vitesses d'enveloppe, en pas d'atténuation (10 bits) par seconde.
+# YM2610 (ymfm) : horloge d'enveloppe à 55 555 / 3 Hz ; vitesse effective R (0-63) : un coup tous les 2^(11 - R/4)
+# tops (R < 48), incréments donnés par la table s_increment_table de ymfm.
+_INC_OPN = [0x00000000, 0x00000000, 0x10101010, 0x10101010, 0x10101010, 0x10101010, 0x11101110, 0x11101110] + \
+    [0x10101010, 0x10111010, 0x11101110, 0x11111110] * 10 + \
+    [0x11111111, 0x21112111, 0x21212121, 0x22212221, 0x22222222, 0x42224222, 0x42424242, 0x44424442,
+     0x44444444, 0x84448444, 0x84848484, 0x88848884, 0x88888888, 0x88888888, 0x88888888, 0x88888888]
+
+
+def vitesse_opn(r):
+    t = _INC_OPN[r]
+    moy = sum((t >> (4 * i)) & 15 for i in range(8)) / 8
+    return FS_FM / 3 * moy / 2 ** max(0, 11 - (r >> 2))
+
+
+def vitesse_scsp(r):
+    """SCSP (Mednafen RunEG, phase de déclin) : moyenne sur 2^16 échantillons"""
+    if r == 0:
+        return 0.0
+    wbt = (0x18 - min(0x18, r)) >> 1
+    adj = int(r < 0x18) & (r & 1)
+    ermaxo = max(0x18, min(0x1E, r))
+    tot = 0
+    for sc in range(1, 1 << 16):
+        scxc = (sc ^ (sc - 1)) & (sc ^ 1)
+        if ((scxc | (scxc >> adj)) >> (wbt + adj)) & 1:
+            srac = ((0x20 - ermaxo) >> 1) + (ermaxo & 1 & (sc >> (wbt + 1)))
+            tot += 16 >> srac
+    return tot / (1 << 16) * FS_SCSP
+
+
+V_SCSP = [vitesse_scsp(r) for r in range(32)]
+# vitesse effective YM2610 (0-63) -> vitesse effective SCSP (1-31) la plus proche en durée
+EG_MAP = [0] + [min(range(1, 32), key=lambda e: abs(math.log(V_SCSP[e] / vitesse_opn(r)))) if vitesse_opn(r) else 0
+                for r in range(1, 64)]
+
+
+def octfns(r):
+    """rapport de lecture (échantillons source par échantillon SCSP) -> mot OCT/FNS ; None si hors plage"""
+    if r <= 0:
+        return 0
+    o = math.floor(math.log2(r))
+    if o > 7:
+        return None
+    o = max(o, -8)
+    f = int(round((r / 2 ** o - 1) * 1024))
+    if f >= 1024:
+        if o == 7:
+            return None
+        o, f = o + 1, 0
+    f = max(0, min(1023, f))
+    return ((o & 0xF) << 11) | f
+
+
+class Scsp:
+    """ombre des registres de voie ; n'émet que les mots changés"""
+
+    def __init__(self):
+        self.r = {}
+        self.out = []
+
+    def w(self, slot, reg, v, force=False):
+        a = slot * 0x20 + reg
+        v &= 0xFFFF
+        if force or self.r.get(a) != v:
+            self.r[a] = v
+            self.out.append((a, v))
+
+    def raw(self, a, v):
+        self.out.append((a, v & 0xFFFF))
+
+
+class Conv:
+    def __init__(self, rom, sans):
+        self.rom = rom
+        self.sans = sans
+        self.y = [[0] * 256, [0] * 256]
+        self.s = Scsp()
+        self.on = [[False] * 4 for _ in range(4)]       # touche de chaque opérateur
+        self.pcm = bytearray()
+        self.pcm_cache = {}
+        self.a_on = [False] * 6
+        self.b_on = False
+        self.clamp = 0
+        self.emit = False
+        self.t = 0.0                                      # temps de l'écriture en cours (pour les relances)
+        self.off_t = {}                                   # (voie, op) -> temps du dernier relâchement
+        self.pauses = 0
+        self.courtes = 0
+        self.ecretes = 0
+        self.b_pref = {}
+        self.fb_perdus = 0
+
+    # --- FM ---------------------------------------------------------------------------------------------------
+    @staticmethod
+    def voie(port, ch):
+        return {(0, 1): 0, (0, 2): 1, (1, 1): 2, (1, 2): 3}.get((port, ch))
+
+    def regs_op(self, c, k):
+        """registres YM de l'opérateur k (0 = S1 .. 3 = S4) de la voie c : (port, décalage)"""
+        port, ch = [(0, 1), (0, 2), (1, 1), (1, 2)][c]
+        off = [0, 8, 4, 12][k] + ch                       # S1 +0, S2 +8, S3 +4, S4 +C
+        return port, off
+
+    def blockfreq(self, c):
+        port, ch = [(0, 1), (0, 2), (1, 1), (1, 2)][c]
+        y = self.y[port]
+        return ((y[0xA4 + ch] & 0x3F) << 8) | y[0xA0 + ch]
+
+    def maj_op(self, c, k):
+        port, off = self.regs_op(c, k)
+        y = self.y[port]
+        ch = [(0, 1), (0, 2), (1, 1), (1, 2)][c][1]
+        slot = slot_fm(c, k)
+        bf = self.blockfreq(c)
+        fnum, block = bf & 0x7FF, (bf >> 11) & 7
+        kc = (block << 2) | KC_TABLE[(fnum >> 7) & 15]
+        dt, mul = (y[0x30 + off] >> 4) & 7, y[0x30 + off] & 15
+        step = ((fnum << 1) << block) >> 2
+        adj = DETUNE[kc][dt & 3]
+        step = (step + (-adj if dt & 4 else adj)) & 0x1FFFF
+        step = (step * (mul * 2 if mul else 1)) >> 1
+        r = step / 2 ** 20 * FS_FM * L_ONDE / FS_SCSP
+        courte = r >= 255.9                               # au-delà de 11 kHz : onde de 256 points
+        if courte:
+            r = r * L_COURTE / L_ONDE
+            self.courtes += 1
+        of = octfns(r)
+        if of is None:
+            of = (7 << 11) | 1023
+            self.clamp += 1
+        octv = of >> 11
+        octv = octv - 16 if octv & 8 else octv
+        # enveloppe : vitesse effective YM2610 (2 R + ks) -> vitesse SCSP la plus proche en durée (EG_MAP)
+        ks = y[0x50 + off] >> 6
+        ksv = kc >> (3 - ks)
+        ar, dr, sr = y[0x50 + off] & 31, y[0x60 + off] & 31, y[0x70 + off] & 31
+        sl, rr = y[0x80 + off] >> 4, y[0x80 + off] & 15
+
+        def rate(rv):
+            return 0 if rv == 0 else EG_MAP[min(63, 2 * rv + ksv)]
+        rar, rdr, rsr, rrr = rate(ar), rate(dr), rate(sr), EG_MAP[min(63, 2 * (2 * rr + 1) + ksv)]
+        inst = ar and 2 * ar + ksv >= 62
+        if inst:                                          # attaque instantanée : AR 31 + échelle ≥ 1
+            sc = max(1, octv)
+            krs = sc - octv
+            if krs > 14:
+                krs, sc = 0xF, 0
+            rar = 31
+            rdr, rsr, rrr = [max(1, v - sc) if v else 0 for v in (rdr, rsr, rrr)]
+        else:
+            krs = 0xF
+        dl = 31 if sl == 15 else sl
+        tl = (y[0x40 + off] & 127) * 2
+        alg, fb = y[0xB0 + ch] & 7, (y[0xB0 + ch] >> 3) & 7
+        ins, car = ALGO[alg]
+        dmdl = 2 if courte else 0                         # onde 4 fois plus courte : décalages 4 fois plus petits
+        if k == 0:
+            if fb:
+                mdl, mx, my = MDL_FB + fb - dmdl, 0x20, 0x00
+                if mdl < 5:
+                    mdl = 0
+                    self.fb_perdus += 1
+            else:
+                mdl, mx, my = 0, 0, 0
+        elif k in ins:
+            src = ins[k]
+            mx = (slot_fm(c, src[0]) - slot) & 63
+            my = (slot_fm(c, src[1]) - slot) & 63 if len(src) > 1 else (63 - slot) & 63
+            mdl = MDL_MOD - dmdl
+        else:
+            mdl, mx, my = 0, 0, 0
+        lr = y[0xB4 + ch] >> 6
+        if k in car and 'fm' not in self.sans and lr:
+            pan = {3: 0x00, 2: 0x1F, 1: 0x0F}[lr]
+            disdl = DISDL_FM
+        else:
+            pan, disdl = 0, 0
+        if k in car:
+            tl += TL_PORTEUSE
+        tl = min(255, tl)
+        s = self.s
+        sa = ONDE_COURTE + 2 * 4 * L_COURTE if courte else ONDE + 2 * L_ONDE
+        a0 = self.s.r.get(slot * 0x20, 0x0020)
+        s.w(slot, 0x00, (a0 & 0xFFF0) | (sa >> 16))
+        s.w(slot, 0x02, sa & 0xFFFF)
+        s.w(slot, 0x06, L_COURTE if courte else L_ONDE)
+        s.w(slot, 0x08, (rsr << 11) | (rdr << 6) | rar)
+        s.w(slot, 0x0A, (krs << 10) | (dl << 5) | rrr)
+        s.w(slot, 0x0C, tl)
+        s.w(slot, 0x0E, (mdl << 12) | (mx << 6) | my)
+        s.w(slot, 0x10, of)
+        s.w(slot, 0x16, (disdl << 13) | (pan << 8))
+
+    def init_fm(self):
+        for c in range(4):
+            for k in range(4):
+                slot = slot_fm(c, k)
+                sa = ONDE + 2 * L_ONDE
+                self.s.w(slot, 0x00, 0x0020 | (sa >> 16), True)      # boucle normale, 16 bits, touche relâchée
+                self.s.w(slot, 0x02, sa & 0xFFFF, True)
+                self.s.w(slot, 0x04, 0, True)
+                self.s.w(slot, 0x06, L_ONDE, True)
+                self.s.w(slot, 0x12, 0, True)
+                self.s.w(slot, 0x14, 0, True)
+                self.maj_op(c, k)
+        for slot in VOIES_A + [VOIE_B]:
+            self.s.w(slot, 0x00, 0x0020, True)
+            for reg in (0x02, 0x04, 0x06, 0x0E, 0x10, 0x12, 0x14, 0x16):
+                self.s.w(slot, reg, 0, True)
+            self.s.w(slot, 0x08, 31, True)                           # AR 31, pas de déclin
+            self.s.w(slot, 0x0A, (0xE << 10) | 31, True)             # KRS 14 : attaque instantanée ; RR 31
+            self.s.w(slot, 0x0C, 0, True)
+        self.s.w(VOIE_NULLE, 0x00, 0, True)
+        self.s.w(VOIE_NULLE, 0x16, 0, True)
+
+    def cle(self, v):
+        ch = v & 7
+        port, c_ = (0, ch) if ch < 4 else (1, ch - 4)
+        c = self.voie(port, c_)
+        if c is None:
+            return
+        bits = [(v >> 4) & 1, (v >> 5) & 1, (v >> 6) & 1, (v >> 7) & 1]  # S1, S2, S3, S4
+        ex = False
+        pause = False
+        for k in range(4):
+            on = bool(bits[k]) and 'fm' not in self.sans and 'fm%d' % ch not in self.sans
+            if on != self.on[c][k]:
+                self.on[c][k] = on
+                slot = slot_fm(c, k)
+                if on:
+                    # relâchée puis enfoncée dans la même tranche : le SCSP doit voir le relâchement au moins un
+                    # échantillon, sinon la note n'est pas relancée. Règle sur l'écart de temps (moins d'une tranche),
+                    # et non sur le numéro de tranche, pour que chaque tour de boucle donne les mêmes écritures
+                    if self.t - self.off_t.get((c, k), -1.0) < TRANCHE / FS_SCSP and not pause:
+                        if ex:
+                            a = 6 * 0x20
+                            self.s.raw(a, self.s.r[a] | 0x1000)
+                            ex = False
+                        self.s.raw(0xA000, 0)
+                        self.pauses += 1
+                        pause = True
+                    self.maj_op(c, k)
+                else:
+                    self.off_t[(c, k)] = self.t
+                a = slot * 0x20
+                v0 = (self.s.r.get(a, 0) & ~0x1800) | (0x0800 if on else 0)
+                self.s.w(slot, 0x00, v0)
+                ex = True
+        if ex:
+            a = 6 * 0x20
+            self.s.raw(a, self.s.r[a] | 0x1000)
+
+    # --- ADPCM ------------------------------------------------------------------------------------------------
+    def adpcm_de(self, kind, s, e, fs):
+        """MUS_ADPCM : (décalage des octets ADPCM dans la banque, longueur en échantillons de l'anneau, type, coefs)"""
+        if (s, e) not in self.pcm_cache:
+            self.pcm += bytes((-len(self.pcm)) % 4)
+            self.pcm_cache[(s, e)] = len(self.pcm)
+            self.pcm += bytes(self.rom[a] if a < len(self.rom) else 0 for a in range(s, e + 1))
+        off, nq = self.pcm_cache[(s, e)], 2 * (e - s + 1)
+        if kind == 'a':
+            return (off, nq, 3, None) if A_SIMPLE else (off, 2 * nq, 1, None)
+        return off, nq, 2, coefs_b(fs)
+
+    def pcm_de(self, kind, s, e, fs=None):
+        key = (kind, s, e)
+        if kind == 'b' and (s, e) in self.b_pref:              # un seul exemplaire : filtré pour sa hauteur la plus jouée
+            fs = self.b_pref[(s, e)]
+        if key not in self.pcm_cache:
+            data = decode_a(self.rom, s, e) if kind == 'a' else decode_b(self.rom, s, e, fs)
+            off = len(self.pcm)
+            for v in data:
+                if abs(v) > 32767:
+                    self.ecretes += 1
+                self.pcm += struct.pack('>h', int(max(-32768, min(32767, round(v)))))
+            self.pcm_cache[key] = (off, len(data))
+        return self.pcm_cache[key]
+
+    def niveau_a(self, ch):
+        il = self.y[1][0x08 + ch]
+        vol = ((il & 0x1F) ^ 0x1F) + ((self.y[1][0x01] & 0x3F) ^ 0x3F)
+        lr = il >> 6
+        slot = VOIES_A[ch]
+        if vol >= 63 or not lr:
+            self.s.w(slot, 0x16, 0)
+            return
+        self.s.w(slot, 0x0C, min(255, vol * 2))
+        self.s.w(slot, 0x16, (DISDL_PCM << 13) | ({3: 0x00, 2: 0x1F, 1: 0x0F}[lr] << 8))
+
+    def depart(self, slot, off, n, typ=0, coefs=None):
+        self.s.raw(0x8000 | slot, typ)
+        self.s.raw(off >> 16, off & 0xFFFF)
+        self.s.raw(n >> 16, n & 0xFFFF)
+        if coefs:
+            self.s.raw(coefs[0], coefs[1])
+            self.s.raw(coefs[2], 0)
+
+    def adpcm_a(self, reg, v):
+        if reg == 0x00:
+            for ch in range(6):
+                if not v & (1 << ch):
+                    continue
+                slot = VOIES_A[ch]
+                if v & 0x80:
+                    if self.a_on[ch]:
+                        self.s.raw(0x9000 | slot, 0)
+                        self.a_on[ch] = False
+                elif 'a' not in self.sans:
+                    y = self.y[1]
+                    st = ((y[0x18 + ch] << 8) | y[0x10 + ch]) << 8
+                    en = (((y[0x28 + ch] << 8) | y[0x20 + ch]) << 8) | 0xFF
+                    if ADPCM:
+                        off, n, typ, co = self.adpcm_de('a', st, en, None)
+                        self.s.w(slot, 0x10, octfns((1 if A_SIMPLE else 2) * FS_A / FS_SCSP))
+                    else:
+                        off, n = self.pcm_de('a', st, en)
+                        typ, co = 0, None
+                        self.s.w(slot, 0x10, octfns(FS_A / FS_SCSP))
+                    self.niveau_a(ch)
+                    self.depart(slot, off, n, typ, co)
+                    self.a_on[ch] = True
+        elif reg == 0x01:
+            for ch in range(6):
+                self.niveau_a(ch)
+        elif 0x08 <= reg <= 0x0D:
+            self.niveau_a(reg - 0x08)
+
+    def niveau_b(self):
+        y = self.y[0]
+        lvl, lr = y[0x1B], y[0x11] >> 6
+        if not lvl or not lr:
+            self.s.w(VOIE_B, 0x16, 0)
+            return
+        tl = min(255, int(round(-20 * math.log10(lvl / 255) / 0.375)))
+        self.s.w(VOIE_B, 0x0C, tl)
+        self.s.w(VOIE_B, 0x16, (DISDL_PCM << 13) | ({3: 0x00, 2: 0x1F, 1: 0x0F}[lr] << 8))
+
+    def hauteur_b(self):
+        y = self.y[0]
+        dn = (y[0x1A] << 8) | y[0x19]
+        self.s.w(VOIE_B, 0x10, octfns(dn / 65536 * FS_FM / FS_SCSP) or 0)
+
+    def adpcm_b(self, reg, v):
+        if reg == 0x10:
+            if v & 0x01 or not v & 0x80:
+                if self.b_on and (v & 0x01):
+                    self.s.raw(0x9000 | VOIE_B, 0)
+                    self.b_on = False
+            if v & 0x80 and 'b' not in self.sans:
+                y = self.y[0]
+                st = ((y[0x13] << 8) | y[0x12]) << 8
+                en = (((y[0x15] << 8) | y[0x14]) << 8) | 0xFF
+                dn = (y[0x1A] << 8) | y[0x19]
+                if ADPCM:
+                    off, n, typ, co = self.adpcm_de('b', st, en, dn / 65536 * FS_FM)
+                else:
+                    off, n = self.pcm_de('b', st, en, dn / 65536 * FS_FM)
+                    typ, co = 0, None
+                self.hauteur_b()
+                self.niveau_b()
+                self.depart(VOIE_B, off, n, typ, co)
+                self.b_on = True
+        elif reg in (0x11, 0x1B):
+            self.niveau_b()
+        elif reg in (0x19, 0x1A):
+            self.hauteur_b()
+
+    # --- entrée ----------------------------------------------------------------------------------------------
+    def ecrit(self, port, reg, v):
+        self.y[port][reg] = v
+        if not self.emit:
+            return
+        if port == 1 and reg < 0x30:
+            self.adpcm_a(reg, v)
+            return
+        if port == 0 and 0x10 <= reg <= 0x1C:
+            self.adpcm_b(reg, v)
+            return
+        if port == 0 and reg == 0x28:
+            self.cle(v)
+            return
+        if reg < 0x30 or reg > 0xB6:
+            return
+        ch = reg & 3
+        c = self.voie(port, ch)
+        if c is None:
+            return
+        if reg >= 0xA0:                                   # fréquence, algorithme, sortie : toute la voie
+            if 0xA4 <= reg <= 0xA6:
+                return                                    # l'octet haut ne compte qu'à l'écriture de 0xA0-0xA2
+            for k in range(4):
+                self.maj_op(c, k)
+        else:
+            k = [0, 2, 1, 3][(reg >> 2) & 3]
+            self.maj_op(c, k)
+
+
+def lit_journal(log, t0, dur):
+    """(écritures avant t0, écritures de [t0, t0 + dur)) : [(t, port, reg, val)]"""
+    avant, ev = [], []
+    for line in open(log):
+        t, p, r, d = line.split()
+        t, p, r, d = float(t), int(p), int(r, 16), int(d, 16)
+        if t >= t0 + dur:
+            break
+        (ev if t >= t0 else avant).append((t, p, r, d))
+    return avant, ev
+
+
+def fusion(l):
+    """[(tranche, écritures)] -> une entrée par tranche"""
+    out = []
+    for tr, w in l:
+        if out and out[-1][0] == tr:
+            out[-1] = (tr, out[-1][1] + w)
+        else:
+            out.append((tr, list(w)))
+    return out
+
+
+def tr_de(t, t0):
+    return int(round((t - t0) * FS_SCSP / TRANCHE))
+
+
+def main():
+    log, rom_p, t0, dur, out = sys.argv[1], sys.argv[2], float(sys.argv[3]), float(sys.argv[4]), sys.argv[5]
+    sans = set(sys.argv[sys.argv.index('--sans') + 1].split(',')) if '--sans' in sys.argv else set()
+    rom = open(rom_p, 'rb').read()
+    avant, ev = lit_journal(log, t0, dur)
+    # boucle : (début Ts, période P) ; on convertit jusqu'à deux tours de plus que le tour gardé, pour vérifier
+    boucle = None
+    if '--boucle' in sys.argv:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import boucle_ym
+        r = boucle_ym.cherche(ev, detail=True)
+        if r:
+            boucle = r
+    if boucle:                                            # tours découpés par indice d'écriture (k constant)
+        bs, bk, P, bidx = boucle
+        ntours = (len(bidx) - bs) // bk                   # tours complets dans la capture
+        bornes = [bidx[bs + j * bk] for j in range(ntours)] + [bidx[bs + ntours * bk] if bs + ntours * bk < len(bidx)
+                                                              else len(ev)]
+        fin_t = t0 + dur
+    else:                                                 # le morceau s'arrête : 2 s après sa dernière écriture
+        import boucle_ym as _b
+        der = max((e[0] for e in ev if not _b.ignore(e)), default=t0)
+        fin_t = min(t0 + dur, der + 2.0)
+    ev = [e for e in ev if e[0] < fin_t]
+    cv = Conv(rom, sans)
+    # premier passage : hauteur la plus fréquente de chaque échantillon ADPCM-B dans l'extrait
+    import collections
+    y0, compte = [0] * 256, collections.defaultdict(collections.Counter)
+    for t, p, r, d in avant + ev:
+        if p == 0:
+            y0[r] = d
+            if t >= t0 and r == 0x10 and d & 0x80:
+                se = (((y0[0x13] << 8) | y0[0x12]) << 8, ((((y0[0x15] << 8) | y0[0x14]) << 8) | 0xFF))
+                compte[se][((y0[0x1A] << 8) | y0[0x19]) / 65536 * FS_FM] += 1
+    cv.b_pref = {se: c.most_common(1)[0][0] for se, c in compte.items()}
+    for t, p, r, d in avant:
+        cv.ecrit(p, r, d)
+    cv.emit = True
+    cv.init_fm()
+    init = cv.s.out
+    cv.s.out = []
+    sorties = []                                          # (temps, tranche, [(a, v)])
+    for i, (t, p, r, d) in enumerate(ev):
+        tr = tr_de(t, t0)
+        cv.t = t
+        cv.ecrit(p, r, d)
+        if cv.s.out:                                      # pas de fusion ici : un tour doit commencer net
+            sorties.append((i, tr, cv.s.out))
+            cv.s.out = []
+    # l'initialisation (≈ 300 écritures) est étalée sur les premières tranches, 32 par tranche, et tout le reste est
+    # décalé d'autant : une seule tranche chargée de 300 écritures déborde sur le MiSTer
+    kinit = (len(init) + 31) // 32
+    blocs = [(i, init[32 * i:32 * i + 32]) for i in range(kinit)]
+    reprise_bloc = None
+    verif = ''
+    per_tr = deb_tr = 0
+    if boucle:
+        def tour(j):
+            a, b = bornes[j], bornes[j + 1]
+            base = tr_de(ev[a][0], t0)
+            return [(tr - base, w) for i, tr, w in sorties if a <= i < b]      # par écriture : jeu d'une tranche
+
+        def pareil(x, y):
+            return len(x) == len(y) and all(abs(a[0] - b[0]) <= 1 and a[1] == b[1] for a, b in zip(x, y))
+        # on garde le premier tour identique au suivant, et on vérifie aussi les tours d'après quand il y en a
+        j = None
+        for jj in range(ntours - 1):
+            if pareil(tour(jj), tour(jj + 1)):
+                j = jj
+                autres = sum(pareil(tour(jj), tour(m)) for m in range(jj + 2, ntours))
+                verif = 'boucle vérifiée : tour %d = tour %d%s (%d tours complets)' % (
+                    jj + 1, jj + 2, ' = %d suivant(s)' % autres if autres else '', ntours)
+                break
+        if j is None:
+            j = 0
+            verif = 'BOUCLE NON VÉRIFIÉE (%d tours complets dans la capture)' % ntours
+        a, b = bornes[j], bornes[j + 1]
+        deb_tr = tr_de(ev[a][0], t0) + kinit
+        fin_tr = deb_tr + int(round(P * FS_SCSP / TRANCHE))
+        per_tr = fin_tr - deb_tr
+        blocs += fusion([(tr + kinit, w) for i, tr, w in sorties if i < a])
+        reprise_bloc = len(blocs)
+        blocs.append((deb_tr, []))                        # bloc vide au début du tour : point de reprise
+        blocs += fusion([(tr + kinit, w) for i, tr, w in sorties if a <= i < b])
+        fin_tr = max(fin_tr, blocs[-1][0])                # jeu d'une tranche sur la dernière écriture du tour
+        blocs.append((fin_tr, None))                      # reprise
+    else:
+        blocs += fusion([(tr + kinit, w) for t, tr, w in sorties])
+        fin = []
+        for c in range(4):
+            for k in range(4):
+                slot = slot_fm(c, k)
+                fin.append((slot * 0x20, cv.s.r.get(slot * 0x20, 0) & ~0x1800))
+        for slot in VOIES_A + [VOIE_B]:
+            fin.append((0x9000 | slot, 0))
+        fin.append((6 * 0x20, (cv.s.r.get(6 * 0x20, 0) & ~0x1800) | 0x1000))
+        blocs.append((tr_de(fin_t, t0) + kinit, fin))
+    flux = bytearray()
+    prev = 0
+    reprise = 0
+    for i, (tr, ws) in enumerate(blocs):
+        d = tr - prev
+        while d > 0xFFFE:
+            flux += struct.pack('>HH', 0xFFFE, 0)
+            d -= 0xFFFE
+        if i == reprise_bloc:
+            reprise = len(flux)
+        if ws is None:
+            flux += struct.pack('>HH', d, 0xFFFD)
+            break
+        flux += struct.pack('>HH', d, len(ws))
+        for a, v in ws:
+            flux += struct.pack('>HH', a, v)
+        prev = tr
+    else:
+        flux += struct.pack('>HH', 0xFFFF, 0)
+    off_flux = 0x30
+    head = bytearray(off_flux)
+    onde = b''.join(struct.pack('>h', int(round(32767 * math.sin(2 * math.pi * i / L_ONDE)))) for i in range(L_ONDE)) * 4
+    onde += b''.join(struct.pack('>h', int(round(32767 * math.sin(2 * math.pi * i / L_COURTE))))
+                     for i in range(L_COURTE)) * 10
+    off_onde = (off_flux + len(flux) + 3) & ~3
+    off_pcm = off_onde + len(onde)
+    struct.pack_into('>4sIIIIIIIIIII', head, 0, b'YMSC', off_flux, len(flux), off_pcm, len(cv.pcm), ONDE, ANNEAUX,
+                     off_onde, len(onde) // 2, reprise, per_tr, deb_tr)
+    data = head + flux + bytes(off_onde - off_flux - len(flux)) + onde + cv.pcm
+    open(out, 'wb').write(data)
+    nw = sum(len(w) for _, w in blocs if w)
+    if boucle:
+        quoi = 'reprise à %.2f s, période %.3f s (%d tranches), %s' % ((deb_tr - kinit) * TRANCHE / FS_SCSP, P,
+                                                                       per_tr, verif)
+    else:
+        quoi = 'sans boucle, fin à %.2f s' % (fin_t - t0)
+    print('%s : %s ; %d blocs, %d écritures SCSP, flux %d Kio, PCM %d Kio (%d échantillons distincts), %d hauteurs FM '
+          'écrêtées, %d pauses, %d ondes courtes (%d rétroactions perdues), %d échantillons PCM écrêtés'
+          % (out, quoi, len(blocs), nw, len(flux) // 1024, len(cv.pcm) // 1024, len(cv.pcm_cache), cv.clamp,
+             cv.pauses, cv.courtes, cv.fb_perdus, cv.ecretes))
+
+
+if __name__ == '__main__':
+    main()
+''',
+        'boucle_ym': r'''#!/usr/bin/env python3
+"""Point de boucle d'un morceau MVS dans le journal YM2610 de MAME (étape 1 de musique_integration_plan.md).
+
+    python3 tools/musique/boucle_ym.py <ym.log> <t0 s> <durée s>          (un morceau, détail)
+    import boucle_ym ; boucle_ym.cherche(evts)                              (depuis ym2610_scsp.py)
+
+Le pilote M1 rejoue la même suite d'écritures à chaque tour. On cherche le plus petit décalage k (en écritures)
+tel que toute la fin du journal se répète : E[j] == E[j + k] pour j de s à la fin, avec s minimal (début de la
+partie répétée). Sont ignorées pour la comparaison les écritures sans effet sur la conversion
+dont le moment dépend des interruptions du Z80 : minuteries (port 0, 0x24-0x27), drapeaux de fin (port 0, 0x1C) et
+entretien de l'ADPCM-B (port 0, 0x10 sans départ ni arrêt : bits 0 et 7 à 0). Contrôle : l'écart de temps T[j + k] - T[j] doit être constant (période P).
+Rend (s, k, P) ou None si le morceau ne boucle pas (il s'arrête, ou la capture ne contient pas deux tours).
+"""
+import sys
+
+MINUT = {0x24, 0x25, 0x26, 0x27}
+
+
+def ignore(e):
+    _, p, r, v = e
+    return p == 0 and (r in MINUT or r == 0x1C or (r == 0x10 and not v & 0x81))
+
+
+def cle(e):
+    """écriture comparée ; 0xB4-0xB6 sans les bits de panoramique (6-7) : le pilote les fait tourner d'un tour à
+    l'autre sur quelques notes (0x23, 0x24 : période réelle plus longue que la capture). La boucle garde alors le
+    panoramique du premier tour."""
+    _, p, r, v = e
+    return (p, r, v & 0x3F) if 0xB4 <= r <= 0xB6 else (p, r, v)
+
+
+def lit(log, t0, dur):
+    ev = []
+    for line in open(log):
+        t, p, r, d = line.split()
+        t = float(t)
+        if t < t0:
+            continue
+        if t >= t0 + dur:
+            break
+        ev.append((t, int(p), int(r, 16), int(d, 16)))
+    return ev
+
+
+def cherche(ev, tours_min=1.2, jeu=0.002, detail=False):
+    """ev : [(t, port, reg, val)] ; rend (s, k, P) en indices de ev, ou None ; detail : (s, k, P, idx), s et k en
+    indices des écritures comparées (idx : leur indice dans ev). Le tour j va de idx[s + j k] à idx[s + (j + 1) k]."""
+    idx = [i for i, e in enumerate(ev) if not ignore(e)]
+    E = [cle(ev[i]) for i in idx]
+    T = [ev[i][0] for i in idx]
+    n = len(E)
+    if n < 200:
+        return None
+    # fenêtre de la fin : ses occurrences antérieures donnent les candidats k
+    w = 64
+    fin = E[n - w:]
+    cands = []
+    for i in range(n - w - 1, -1, -1):
+        if E[i] == fin[0] and E[i:i + w] == fin:
+            cands.append(n - w - i)
+    res = []
+    for k in sorted(cands):
+        j = n - k - 1
+        while j >= 0 and E[j] == E[j + k]:
+            j -= 1
+        s = j + 1
+        if n - s < tours_min * k:                 # pas assez de répétition pour croire à une boucle
+            continue
+        d = [T[i + k] - T[i] for i in range(s, n - k)]
+        P = sorted(d)[len(d) // 2]
+        if max(abs(x - P) for x in d) > jeu:
+            continue
+        res.append((s, k, P))
+    if res:                                       # la boucle qui commence le plus tôt, puis la plus courte
+        s, k, P = min(res)
+        if detail:
+            return s, k, P, idx
+        return idx[s], idx[s + k] - idx[s], P
+    return None
+
+
+def main():
+    log, t0, dur = sys.argv[1], float(sys.argv[2]), float(sys.argv[3])
+    ev = lit(log, t0, dur)
+    r = cherche(ev)
+    if not r:
+        print('pas de boucle')
+        return
+    s, k, P = r
+    print(f'début {ev[s][0] - t0:.3f} s (écriture {s}), {k} écritures par tour, période {P:.4f} s')
+
+
+if __name__ == '__main__':
+    main()
+''',
+        'bruitages': r'''#!/usr/bin/env python3
+"""Bruitages et voix de la MVS joués par le lecteur de musique (docs/archive/musique_32mio_preparation.md §13.2).
+
+Reprend la table d'ARCADE_SON (étiquette archive-son, tools/arcade_voices.py) : le code son du portage Saturn est
+l'indice de l'entrée de 11 octets de la table du pilote M1 (084-m1.m1 en 0x425B). Ici, les octets ADPCM-A d'origine
+vont en CS1 avec la table, au lieu des emplacements des .APM :
+
+  BRUIT_CS1 (adresse 0x24000000 + BRUIT_CS1) : table de 960 × 8 octets {adresse en cartouche (32), octets (16),
+  priorité (8), niveau (8 : bit 7 G, bit 6 D, bits 0-4 niveau, comme le registre 0x08 + voie du YM2610)}, entrée
+  vide = 0 ; puis les échantillons, chacun une fois, alignés sur 4.
+
+Le chemin de lecture de MM.BIN (0x060084F0) lit cette table (BRUIT_LECTEUR de src/cdrom/cdrom.s) ; le lecteur de
+l'esclave (src/musique/jeu.c, BRUITAGES) lit les octets à l'adresse que le jeu met dans la fiche de sa voie.
+
+  python3 tools/musique/bruitages.py <cue> <kof95.zip> <dossier de sortie>
+
+Sortie : bruit.bin (à poser en CS1 à BRUIT_CS1), son_mask.inc (filtre des codes de MM.BIN 0x06008640, inclus par
+cdrom.s). Données tirées de la ROM MVS de l'utilisateur : ne pas diffuser.
+"""
+import struct
+import sys
+import zipfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from inventory_disc import Iso9660, cue_data_track  # noqa: E402
+
+BRUIT_CS1 = 0x800000
+M1_TABLE, M1_ENTRIES = 0x425B, 960
+BANK_BASES = (0, 0x100, 0x1FF, 0x2FF)       # indice du code 0 des commandes 0x18, 0x1A, 0x1C, 0x1E (MM.BIN 0x06008630)
+MM_BASE, MASK_ADDR = 0x06002040, 0x06008640
+SLOT_FILES = [f"C{k:02X}.APM" for k in range(0x1A)] + ["C1D.APM", "C1E.APM", "ERR.APM", "KEEP.APM"]
+
+
+def vrom(archive):
+    with zipfile.ZipFile(archive) as z:
+        v = bytearray(0x900000)
+        for name, at in (("084-v1.v1", 0), ("084-v2.v2", 0x400000), ("084-v3.v3", 0x800000)):
+            d = z.read(name)
+            v[at:at + len(d)] = d
+        return bytes(v), z.read("084-m1.m1")
+
+
+def entrees(v, m1, port):
+    """(indice, début, octets, priorité, niveau) des entrées avec échantillon, instruments de la musique exclus"""
+    for i in range(M1_ENTRIES):
+        prio, a, b, x, a2, b2, level = struct.unpack_from("<BHHBHHB", m1, M1_TABLE + 11 * i)
+        if a == 0 and b == 0xFFFF or (prio == 1 and i not in port):
+            continue
+        if x:                                   # entrée 0x5A : le key-on prend la seconde paire (MAME PCMA=1)
+            a, b = a2, b2
+        size = (b - a + 1) << 8
+        if a > b or (b + 1) << 8 > len(v) or size >= 0x10000:
+            continue
+        yield i, a << 8, size, prio, level
+
+
+def main():
+    cue, zp, out = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
+    out.mkdir(parents=True, exist_ok=True)
+    iso = Iso9660(cue_data_track(cue))
+    try:
+        files = {n.upper(): (s, l) for n, s, l in iso.files()}
+        port = set()
+        for name in SLOT_FILES:
+            s, l = files[name]
+            d = iso.read_extent(l, s)
+            for k in range(struct.unpack_from(">I", d, 0)[0]):
+                ty, code, _, _ = struct.unpack_from(">BBHI", d, 4 + 8 * k)
+                port.add(ty << 8 | code)
+        mm = iso.read_extent(files["MM.BIN"][1], files["MM.BIN"][0])
+    finally:
+        iso.close()
+    v, m1 = vrom(zp)
+    rows = list(entrees(v, m1, port))
+    table = bytearray(M1_ENTRIES * 8)
+    ech = bytearray()
+    place = {}
+    base = 0x24000000 + BRUIT_CS1 + len(table)
+    for i, st, size, prio, level in rows:
+        if (st, size) not in place:
+            place[(st, size)] = base + len(ech)
+            ech += v[st:st + size]
+            ech += bytes((-len(ech)) % 4)
+        struct.pack_into(">IHBB", table, 8 * i, place[(st, size)], size, prio, level)
+    (out / "bruit.bin").write_bytes(table + ech)
+    old = mm[MASK_ADDR - MM_BASE:MASK_ADDR - MM_BASE + 4 * 32]
+    has = {r[0] for r in rows}
+    mask = bytearray(4 * 32)
+    for bank, b0 in enumerate(BANK_BASES):
+        for x in range(0x100):
+            bit, at = 0x80 >> (x & 7), bank * 32 + (x >> 3)
+            if b0 + x in has and (old[at] & bit or b0 + x == 0x85):   # 0x85 : absent du portage, ouvert comme sur la MVS
+                mask[at] |= bit
+    (out / "son_mask.inc").write_text("\t.byte\t" + ",".join(f"0x{b:02X}" for b in mask) + "\n")
+    print(f"{len(rows)} entrées, {len(place)} échantillons distincts, {len(ech) / 2**20:.2f} Mio ; "
+          f"bruit.bin {len(table) + len(ech)} octets en CS1 0x{BRUIT_CS1:X}")
+
+
+if __name__ == "__main__":
+    main()
+''',
     },
 )
 
 
+CODES = ['%02x' % c for c in list(range(0x21, 0x2F)) + [0x30, 0x31] + list(range(0x33, 0x3A))]
+SITES_FNS, B00_SIG = (0x176, 0x1C8, 0x1F0), bytes.fromhex('20fc72a0')
+
+def unpack(text):
+    return zlib.decompress(base64.b64decode(text))
+
 def load_modules(sources, folder):
-    """Write the modules to a folder and import them (real files: the worker processes can import them too)."""
+    """Write the modules to a folder and import the ones run in this process (real files: subprocesses run the others)."""
     for name, src in sources.items():
         sys.modules.pop(name, None)
         with open(os.path.join(folder, name + '.py'), 'w', encoding='utf-8') as f:
             f.write(src)
     sys.path.insert(0, folder)
     importlib.invalidate_caches()
-    return {n: importlib.import_module(n) for n in sources}
+    return {n: importlib.import_module(n) for n in sources if n not in ('z80', 'm1_capture', 'ym2610_scsp', 'boucle_ym')}
 
 def call(mod, *argv):
     """Run a module's command-line entry point, its output going to the log."""
@@ -2697,59 +5017,125 @@ def call(mod, *argv):
     if r:
         raise RuntimeError(f'{mod.__name__} failed ({r})')
 
-def build(version, cue, rom, out_dir):
-    v = VERSIONS[version]
+def music(m, mods, mvs, t, log):
+    """The music package: each piece captured from the MVS sound program (Z80 in Python), converted for the Saturn."""
+    cap = os.path.join(t, 'capture')
+    z = zipfile.ZipFile(mvs)
+    vrom = bytearray(0x900000)
+    for name, off in (('084-v1.v1', 0), ('084-v2.v2', 0x400000), ('084-v3.v3', 0x800000)):
+        b = z.read(name)
+        vrom[off:off + len(b)] = b
+    open(os.path.join(t, 'vrom.bin'), 'wb').write(vrom)
+    for c in CODES:
+        os.makedirs(os.path.join(cap, c))
+        open(os.path.join(cap, c, 'out.txt'), 'w').write(f'SNDSEQ f=767 v={c}\n')
+    workers = max(1, min(len(CODES), os.cpu_count() or 1))
+    print(f'* capturing the {len(CODES)} pieces of music from the MVS sound program, {workers} at a time '
+          f'(about {4.5 * len(CODES) / workers:.0f} minutes on a recent processor)', file=sys.stderr)
+
+    def one(c):
+        r = subprocess.run([sys.executable, os.path.join(mods, 'm1_capture.py'), mvs, c, os.path.join(cap, c, 'ym.log')],
+                           capture_output=True, text=True)
+        if r.returncode:
+            raise RuntimeError(f'music capture {c}: {r.stderr.strip()[-300:]}')
+        return r.stdout
+    done = 0
+    with concurrent.futures.ThreadPoolExecutor(workers) as ex:
+        for out in ex.map(one, CODES):
+            done += 1
+            log.write(out)
+            print(f'  {done}/{len(CODES)}', file=sys.stderr)
+    police = os.path.join(t, 'police.bin')
+    open(police, 'wb').write(unpack(VERSIONS['arcade']['police']))
+    os.environ.update(YMSC_ADPCM='1', JUKE_CAPTURE=cap, JUKE_VROM=os.path.join(t, 'vrom.bin'), JUKE_POLICE=police)
+    m['juke'].C, m['juke'].V = os.path.join(cap, ''), os.path.join(t, 'vrom.bin')   # (read by juke at import time)
+    print('* converting the music for the Saturn sound chip', file=sys.stderr)
+    paquet = os.path.join(t, 'paquet', 'paquet.bin')
+    os.makedirs(os.path.dirname(paquet))
+    call(m['juke'], paquet)
+    return paquet
+
+def build(cue, rom, mvs, out_dir):
+    v = VERSIONS['arcade']
+    names = zipfile.ZipFile(mvs).namelist()
+    for name in ('084-m1.m1', '084-v1.v1', '084-v2.v2', '084-v3.v3'):
+        if name not in names:
+            raise RuntimeError(f'{mvs}: {name} missing (MVS ROM set kof95 expected)')
     os.makedirs(out_dir, exist_ok=True)
-    ss = os.path.join(out_dir, f'kof95_cart_{version}.ss')
+    ss = os.path.join(out_dir, 'kof95_cart.ss')
     log = io.StringIO()
     with tempfile.TemporaryDirectory() as t:
         mods = os.path.join(t, 'modules')
         os.makedirs(mods)
         m = load_modules(v['modules'], mods)
         boot, elf = os.path.join(t, 'boot.bin'), os.path.join(t, 'cdrom.elf')
-        open(boot, 'wb').write(zlib.decompress(base64.b64decode(v['boot'])))
-        open(elf, 'wb').write(zlib.decompress(base64.b64decode(v['elf'])))
+        open(boot, 'wb').write(unpack(v['boot']))
+        open(elf, 'wb').write(unpack(v['elf']))
         p = os.path.join(t, 'p')
         disc = cue
-        if version == 'noloading':
-            # Clean image: data track without duplicates, compressed tiles and .PCM; every tile stored raw.
-            cue = os.path.join(t, 'compact', 'compact.cue')
-            ss_c2 = os.path.join(t, 'c2.ss')
-        args = [cue, rom, boot, ss_c2 if version == 'noloading' else ss, '--run-from-cart',
-                '--replace', '0=' + os.path.join(p, '0'), '--replace', 'MM.BIN=' + os.path.join(p, 'MM.BIN')]
+        cue = os.path.join(t, 'compact', 'compact.cue')
+        ss_c2, raw, clean = (os.path.join(t, n) for n in ('c2.ss', 'raw.ss', 'clean.ss'))
+        blobs = os.path.join(t, 'blobs.txt')
         with contextlib.redirect_stdout(log):
-            if version == 'noloading':
-                print('* compacting the data track', file=sys.stderr)
-                call(m['compact_track'], disc, rom, os.path.join(t, 'compact'), '--strip')
-                print('* preparing the stage tiles and the voice table', file=sys.stderr)
-                call(m['precalc_decors'], '--sat', '--source', disc, cue, os.path.join(t, 'decors'))
-                call(m['voice_banks'], cue, os.path.join(t, 'voice'))
+            paquet = music(m, mods, mvs, t, log)
+            print('* preparing the sound effects', file=sys.stderr)
+            call(m['bruitages'], disc, mvs, os.path.join(t, 'bruitages'))
+            print('* compacting the data track', file=sys.stderr)
+            call(m['compact_track'], disc, rom, os.path.join(t, 'compact'), '--strip')
+            print('* preparing the stage tiles and the voice table', file=sys.stderr)
+            call(m['precalc_decors'], '--sat', '--source', disc, cue, os.path.join(t, 'decors'))
+            call(m['voice_banks'], cue, os.path.join(t, 'voice'))
             print('* patching the game files', file=sys.stderr)
             call(m['patch_kof95'], cue, elf, p)
-            if version == 'noloading':
-                blobs = os.path.join(t, 'blobs.txt')
-                with open(blobs, 'w') as f:
-                    for d in ('decors', 'voice', 'p'):
-                        f.write(open(os.path.join(t, d, 'blobs.txt')).read())
-                args += ['--blobs', blobs, '--table', os.path.join(t, 'file_table.tsv')]
+            with open(blobs, 'w') as f:
+                for d in ('decors', 'voice', 'p'):
+                    f.write(open(os.path.join(t, d, 'blobs.txt')).read())
             print('* building the cartridge image', file=sys.stderr)
-            call(m['build_cart'], *args)
-            if version == 'noloading':
-                print('* decompressing every tile with the game\'s own decompressor (about a minute)', file=sys.stderr)
-                raw_log = io.StringIO()
-                with contextlib.redirect_stdout(raw_log):
-                    call(m['char_raw'], ss_c2, os.path.join(t, 'file_table.tsv'), elf, os.path.join(t, 'raw.ss'),
-                         '--blobs', blobs, '--source', disc, '--free-mpr', '--dedup')
-                log.write(raw_log.getvalue())
-                with open(os.path.join(t, 'char_raw.log'), 'w') as f:
-                    f.write(raw_log.getvalue())
-                print('* adding the order-screen taunts', file=sys.stderr)
-                call(m['taunt'], os.path.join(t, 'raw.ss'), elf, os.path.join(t, 'char_raw.log'), ss)
+            call(m['build_cart'], cue, rom, boot, ss_c2, '--run-from-cart', '--replace', '0=' + os.path.join(p, '0'),
+                 '--replace', 'MM.BIN=' + os.path.join(p, 'MM.BIN'), '--blobs', blobs,
+                 '--table', os.path.join(t, 'file_table.tsv'))
+            print("* decompressing every tile with the game's own decompressor (a few minutes)", file=sys.stderr)
+            raw_log = io.StringIO()
+            with contextlib.redirect_stdout(raw_log):
+                call(m['char_raw'], ss_c2, os.path.join(t, 'file_table.tsv'), elf, raw, '--blobs', blobs,
+                     '--source', disc, '--free-mpr', '--dedup')
+            log.write(raw_log.getvalue())
+            with open(os.path.join(t, 'char_raw.log'), 'w') as f:
+                f.write(raw_log.getvalue())
+            print('* adding the order-screen taunts', file=sys.stderr)
+            call(m['taunt'], raw, elf, os.path.join(t, 'char_raw.log'), clean)
+            print('* adding the music player, the music and the sound effects (48 MiB)', file=sys.stderr)
+            d = bytearray(open(clean, 'rb').read())
+            mus, pq = unpack(v['mus']), open(paquet, 'rb').read()
+            br = open(os.path.join(t, 'bruitages', 'bruit.bin'), 'rb').read()
+            o = v['mus_code'] - 0x02000000
+            if len(d) != 32 << 20 or any(b != d[o] for b in d[o:o + len(mus)]):
+                raise RuntimeError('cartridge image: unexpected layout')
+            d[o:o + len(mus)] = mus
+            if len(pq) > 0x800000 or 0x800000 + len(br) > (16 << 20) - 1:
+                raise RuntimeError('music package or sound effects too large')
+            d += pq + b'\xff' * (0x800000 - len(pq)) + br
+            bases = []
+            i = d.find(B00_SIG)
+            while i >= 0:
+                b = i - SITES_FNS[0]
+                if all(d[b + x:b + x + 4] == B00_SIG for x in SITES_FNS):
+                    bases.append(b)
+                i = d.find(B00_SIG, i + 1)
+            if len(bases) != 1 or d[bases[0] + 0x184:bases[0] + 0x186] != b'\x02\x88':
+                raise RuntimeError('sound driver B00.PAC not found')
+            d[bases[0] + 0x185] = 0xA8          # timer A of the sound driver: voices in time with the picture
+            for x in SITES_FNS:
+                d[bases[0] + x + 3] = 0xB8      # pitch of three channels
+            d += b'\xff' * ((48 << 20) - len(d))
+            open(ss, 'wb').write(d)
+            print('* copying the background tiles in VDP2 cell order', file=sys.stderr)
+            call(m['vdp2_cells'], ss)
         sys.path.remove(mods)
     data = open(ss, 'rb').read()
-    mister = os.path.join(out_dir, f'kof95_cart_{version}_32M.bin')
-    open(mister, 'wb').write(data + b'\xff' * (32 * 1024 * 1024 - len(data)))
-    open(os.path.join(out_dir, f'kof95_cart_{version}.log'), 'w').write(log.getvalue())
+    mister = os.path.join(out_dir, 'kof95_cart_48M.bin')
+    open(mister, 'wb').write(data)
+    open(os.path.join(out_dir, 'kof95_cart.log'), 'w').write(log.getvalue())
     ok = True
     for path, ref in zip((ss, mister), v['sha']):
         h = hashlib.sha256(open(path, 'rb').read()).hexdigest()
@@ -2758,18 +5144,15 @@ def build(version, cue, rom, out_dir):
         print(f'{path}: {"OK, identical to the reference" if good else "DIFFERENT from the reference " + ref[:16]}')
     return ok
 
-DEFAULT = 'noloading' if 'noloading' in VERSIONS else next(iter(VERSIONS))
-
 def main():
     args = sys.argv[1:]
-    version = args.pop(0) if args and args[0] in VERSIONS else DEFAULT
-    if len(args) not in (2, 3):
+    if len(args) not in (3, 4):
         print(__doc__)
         return 1
-    cue, rom = args[:2]
-    out = args[2] if len(args) == 3 else '.'
+    cue, rom, mvs = args[:3]
+    out = args[3] if len(args) == 4 else '.'
     try:
-        ok = build(version, cue, rom, out)
+        ok = build(cue, rom, mvs, out)
     except Exception as e:
         print(f'error: {e}', file=sys.stderr)
         return 2

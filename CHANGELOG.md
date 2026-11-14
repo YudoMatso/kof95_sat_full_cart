@@ -2,6 +2,33 @@
 
 Versions follow `major.minor.patch`: patch = fix, minor = addition that breaks nothing, major = big change.
 
+## 2.0.0-beta.1 — 2026-11-14 (pre-release)
+
+**One version only**: the Neo Geo arcade sound on the Saturn, with no loading. `kof95_cart.py` now builds a single 48 MiB
+image; the 1.x variants (`noloading`, `pure`) stay available in the 1.1.0 release.
+
+New input: your dump of the **Neo Geo MVS ROM set** `kof95.zip` (MAME name `kof95`). The music and the sound effects are
+taken from it on your machine; nothing from the game is included in the script.
+
+- **Arcade music**: the 23 pieces of the Neo Geo version, played from the cartridge by a new music player on the Saturn's
+  second processor. The CD is no longer needed at all.
+- **Arcade sound effects and voices** in place of the Saturn ones.
+- **The sound of the AES console's headphone output**, on the music and the sound effects alike.
+- **Sound in time with the picture**, as on the arcade board.
+- **Controls answer one frame earlier** than on the original Saturn version.
+- **Animated team-order screen**: the character being chosen moves, as on the arcade version.
+- **Fix**: wrong sprites on the team-order screen of the Team Edit mode, from the second match on.
+- Slowdowns in fights: about 1 frame in 2,500, as in 1.1.0.
+
+MiSTer: needs the modified Saturn core [Saturn_MiSTer_Cart](https://github.com/YudoMatso/Saturn_MiSTer_Cart) v1.1.0 or later,
+"ROM 32/48M" cartridge mode.
+
+Beta: tested in Mednafen and on MiSTer by automated runs and by hand. 48 MiB is more than any known
+Saturn flash cartridge. The build takes from about 15 minutes to 2 hours depending on the processor (the music is rebuilt
+by an emulated Z80).
+
+    python3 kof95_cart.py "path/to/King of Fighters '95.cue" path/to/mpr-18811-mx.ic1 path/to/kof95.zip out
+
 ## 1.1.0 — 2026-11-04
 
 **`noloading`** is now built by default: no need to enter the variant in the Python command (add `pure` for the other one).
