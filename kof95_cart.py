@@ -2178,7 +2178,9 @@ def main() -> int:
     if a.blobs:
         # Boot area 0x000000-0x200000: IP and boot program below BOOT_USED, then the blobs of the build.
         used = [(0, BOOT_USED)]
-        for line in a.blobs.read_text().split():
+        for line in a.blobs.read_text().splitlines():   # one OFFSET=FILE per line (the path may hold spaces)
+            if not line.strip():
+                continue
             off, _, path = line.partition("=")
             off = int(off, 0)
             if off < BOOT_AREA:

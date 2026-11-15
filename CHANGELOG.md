@@ -13,6 +13,8 @@ Same cartridge image as 2.0.0-beta.1 (identical SHA-256): this version changes o
 - **Progress bar**: each step and how far it is, measured from the work actually done.
 - **Clearer errors**: the step that failed is shown, and `kof95_cart.log` is always written, with the details to report.
 - **Ctrl-C** now stops the whole build at once (the second wave of music captures used to start anyway).
+- **Fix** (archives updated on 2026-11-15): the build stopped at step 8 when the temporary folder had a space in its
+  path, as `E:\Temporary Files` on Windows.
 - **Windows**: the script runs in UTF-8 mode, so that system languages without the accented letters of its messages
   cannot break it.
 
