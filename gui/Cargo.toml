@@ -1,0 +1,16 @@
+[package]
+name = "kof95_cart_gui"
+version = "2.0.0-beta.2"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "Graphical front end of kof95_cart.py (The King of Fighters '95 Saturn cartridge edition builder)"
+
+[dependencies]
+eframe = "=0.31.1"
+rfd = "=0.15.3"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+codegen-units = 1

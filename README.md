@@ -7,6 +7,7 @@ This project is a proof of concept. It takes the Japanese Saturn version of *The
 The repository contains **no game data**. You build the cartridge image yourself from your own copies of the game.
 
 > **Version 2.0 is a beta** (pre-release). The previous version, 1.1.0, is still available from the releases page.
+> New in 2.0.0-beta.2: a builder with a window for Windows and Linux, and a build about 5 to 15 times faster.
 
 ## Why this matters
 
@@ -50,27 +51,46 @@ What made it hard: the Saturn port is the Neo Geo's 68000 program translated to 
 
 ## Building the cartridge image
 
-Everything is in one Python script, `kof95_cart.py`. It needs **Python 3.8 or later**, nothing else, and your own dumps of the game:
+You need your own dumps of the game:
 
 - the disc: *The King of Fighters '95* (Japan, T-3101G), as a `.cue` file with its `.bin` tracks;
 - the 2 MiB ROM cartridge sold with the game: `mpr-18811-mx.ic1`;
 - the Neo Geo MVS ROM set of *The King of Fighters '95*: `kof95.zip` (MAME name `kof95`; the sound files `084-m1.m1`, `084-v1.v1`, `084-v2.v2` and `084-v3.v3` are read).
 
+### The easy way: the builder with a window (Windows, Linux)
+
+Download the archive for your system from the releases page, and unpack it anywhere:
+
+| System | Archive |
+|---|---|
+| Windows 10/11, 64-bit | `kof95_cart-<version>-windows-x64.zip` |
+| Linux, 64-bit (glibc 2.31 or later: Ubuntu 20.04, Debian 11 or later) | `kof95_cart-<version>-linux-x64.tar.gz` |
+
+Start `kof95_cart_gui` (`kof95_cart_gui.exe` on Windows), choose the three files with the **Browse…** buttons or drop them on the window, and press **Start**. The window checks the files, shows the progress of each step, and tells you when the image is ready.
+
+The archive holds the window, the build script `kof95_cart.py` and [PyPy](https://pypy.org), a fast version of Python (MIT license), so nothing has to be installed. On Linux, the file dialogs use the desktop portal (`xdg-desktop-portal`, present on the usual desktops); without it, type or drop the paths.
+
+### From a terminal: the script alone
+
+Everything is in one Python script, `kof95_cart.py`. It needs **Python 3.8 or later**, nothing else. With **PyPy** it runs about 15 times faster (install `pypy3` from your package manager or from pypy.org); the usual Python works too, only slower.
+
 Linux / macOS:
 
 ```sh
-python3 kof95_cart.py "path/to/King of Fighters '95.cue" path/to/mpr-18811-mx.ic1 path/to/kof95.zip out
+pypy3 kof95_cart.py "path/to/King of Fighters '95.cue" path/to/mpr-18811-mx.ic1 path/to/kof95.zip out
 ```
 
-Windows (Command Prompt or PowerShell, with Python from python.org):
+Windows (Command Prompt or PowerShell; `py` instead of `pypy3` for the Python from python.org):
 
 ```bat
-py kof95_cart.py "C:\Games\King of Fighters '95.cue" C:\Games\mpr-18811-mx.ic1 C:\Games\kof95.zip out
+pypy3 kof95_cart.py "C:\Games\King of Fighters '95.cue" C:\Games\mpr-18811-mx.ic1 C:\Games\kof95.zip out
 ```
 
-The script is written to work on Windows but has only been tested on Linux.
+The archives above also run the script this way: `pypy/bin/pypy3 kof95_cart.py …` on Linux, `pypy\pypy3.exe kof95_cart.py …` on Windows.
 
-The build takes **from about 15 minutes to 2 hours** depending on the processor, and uses all its cores: most of the time goes into rebuilding the 23 pieces of music from the arcade sound program.
+Most of the time goes into rebuilding the 23 pieces of music from the arcade sound program, on all the processor's cores: **about 3 minutes with PyPy** on a recent processor (16 threads), **from about 15 minutes to 2 hours with the usual Python**. A progress bar shows each step. If the build fails, the step that failed is shown and `kof95_cart.log`, in the output folder, has the details: please attach it when you report a problem.
+
+Tested on Linux, and on Windows under Wine (Python 3.13 and PyPy 3.11). macOS should work with the script alone, but has not been tested.
 
 You get two files in `out/`, the same 48 MiB image:
 
@@ -95,7 +115,7 @@ mednafen out/kof95_cart.ss
 
 ## License
 
-The code of this project (`kof95_cart.py`) is free software under the **GNU General Public License v3.0 or later**: you can use, study, modify and share it, as long as modified versions stay under the same license. See `LICENSE`.
+The code of this project (`kof95_cart.py` and the builder window, source in `gui/`) is free software under the **GNU General Public License v3.0 or later**: you can use, study, modify and share it, as long as modified versions stay under the same license. See `LICENSE`. The release archives also contain PyPy, under its own MIT license (`pypy/LICENSE`).
 
 ## Legal
 

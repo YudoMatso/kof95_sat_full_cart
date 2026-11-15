@@ -5,7 +5,7 @@
 # Public License as published by the Free Software Foundation, either version 3 of the License, or (at your
 # option) any later version. It is distributed WITHOUT ANY WARRANTY; see the LICENSE file or
 # <https://www.gnu.org/licenses/>.
-"""The King of Fighters '95 (Sega Saturn) - cartridge edition builder, version 2.0 (beta).
+"""The King of Fighters '95 (Sega Saturn) - cartridge edition builder, version 2.0.0-beta.2.
 
 Builds a 48 MiB Saturn cartridge image holding the whole game, with the Neo Geo music and sound effects, from your
 own dumps:
@@ -18,13 +18,16 @@ own dumps:
                        084-v1.v1, 084-v2.v2 and 084-v3.v3 are read)
 
 Writes kof95_cart.ss (Mednafen) and kof95_cart_48M.bin (MiSTer), the same 48 MiB image, then checks it against the
-reference SHA-256. Needs Python 3.8 or later, nothing else. The music is rebuilt from the MVS sound program by an
-emulated Z80: about 4 to 5 minutes of processor time per piece of music, 23 pieces, run in parallel on all cores.
+reference SHA-256. Needs Python 3.8 or later, nothing else; PyPy (pypy.org) runs it about 15 times faster
+(pypy3 kof95_cart.py ...). The music is rebuilt from the MVS sound program by an emulated Z80, 23 pieces run in
+parallel on all cores: about 3 minutes with PyPy on a recent processor, 15 minutes to 2 hours with the usual Python.
+KOF95_PROGRESS=1 replaces the progress bar by '@progress' lines (for the graphical front end).
 
 This file contains only original code: the build modules and the assembled SH-2 code of the project. No data
 from the game is included; everything is taken from your dumps at build time.
 """
-import base64, concurrent.futures, contextlib, hashlib, importlib, io, os, subprocess, sys, tempfile, zipfile, zlib
+import base64, concurrent.futures, contextlib, hashlib, importlib, io, os, platform, subprocess, sys, tempfile, time
+import gc, threading, traceback, zipfile, zlib
 
 VERSIONS = {}
 
@@ -4993,8 +4996,118 @@ if __name__ == "__main__":
 CODES = ['%02x' % c for c in list(range(0x21, 0x2F)) + [0x30, 0x31] + list(range(0x33, 0x3A))]
 SITES_FNS, B00_SIG = (0x176, 0x1C8, 0x1F0), bytes.fromhex('20fc72a0')
 
+STEPS = ['capturing the music', 'converting the music', 'sound effects', 'compacting the data track',
+         'stage tiles and voices', 'patching the game', 'building the image', 'decompressing the tiles',
+         'order-screen taunts', 'music player and sounds', 'background tiles', 'checking the image']
+LOG = io.StringIO()
+STATE = {'step': 0, 't0': time.monotonic(), 't': time.monotonic(), 'progress': None, 'live': 0, 'said': 0.0}
+SAY = threading.Lock()
+TTY = sys.stderr.isatty()
+MACHINE = os.environ.get('KOF95_PROGRESS') == '1'   # for a graphical front end: '@progress' lines instead of the bar
+BAR = 24
+
+def clock(s):
+    s = int(s)
+    return f'{s // 3600}:{s // 60 % 60:02d}:{s % 60:02d}' if s >= 3600 else f'{s // 60}:{s % 60:02d}'
+
+def fraction():
+    # Fraction of the current step's work done, or None when the step cannot be measured.
+    if STATE['progress']:
+        try:
+            return max(0.0, min(1.0, STATE['progress']()))
+        except Exception:
+            pass
+    return None
+
+def status():
+    # One line: the step, a bar measured from the work actually done in it (or a moving bar when the step cannot be
+    # measured), the time since the start.
+    n, now, f = STATE['step'], time.monotonic(), fraction()
+    if f is None:
+        k = int(now * 4) % (BAR + 3)
+        bar, pct = ('░' * BAR + '█' * 3 + '░' * BAR)[BAR + 3 - k:2 * BAR + 3 - k], '    '
+    else:
+        bar, pct = '█' * int(f * BAR) + '░' * (BAR - int(f * BAR)), f'{f * 100:3.0f}%'
+    return f'[{n:2}/{len(STEPS)}] {STEPS[n - 1]:<26} {bar} {pct}   {clock(now - STATE["t0"])}'
+
+def show(force=False):
+    # Rewrite the status line (terminal), or print it once a minute (file or pipe). The caller holds SAY.
+    if not STATE['step']:
+        return
+    now = time.monotonic()
+    if MACHINE:
+        # @progress <step> <steps> <fraction of the step, -1 if unknown> <seconds since the start> <step name>
+        f = fraction()
+        print(f'@progress {STATE["step"]} {len(STEPS)} {-1 if f is None else f:.4f} {now - STATE["t0"]:.0f} '
+              f'{STEPS[STATE["step"] - 1]}', file=sys.stderr, flush=True)
+    elif TTY:
+        line = status()
+        print('\r' + line.ljust(STATE['live']), end='', file=sys.stderr, flush=True)
+        STATE['live'] = len(line)
+    elif force or now - STATE['said'] >= 60:
+        print(status(), file=sys.stderr, flush=True)
+        STATE['said'] = now
+
+def ticker():
+    while True:
+        time.sleep(0.25)
+        with SAY:
+            show()
+
+def say(line):
+    # A line that stays (header, result, error), printed below the status line.
+    with SAY:
+        if STATE['live']:
+            print('\r' + ' ' * STATE['live'] + '\r', end='', file=sys.stderr)
+            STATE['live'] = 0
+        print(line, file=sys.stderr, flush=True)
+
+def step(n, progress=None):
+    # Start step n; progress: a function giving the fraction of its work done. Step times go to the log.
+    with SAY:
+        now = time.monotonic()
+        if STATE['step']:
+            LOG.write(f'  step {STATE["step"]} took {clock(now - STATE["t"])}\n')
+        LOG.write(f'[{n}/{len(STEPS)}] {STEPS[n - 1]} (at {clock(now - STATE["t0"])})\n')
+        STATE.update(step=n, t=now, progress=progress)
+        show(force=True)
+
+def finish():
+    with SAY:
+        if STATE['step']:
+            LOG.write(f'  step {STATE["step"]} took {clock(time.monotonic() - STATE["t"])}\n')
+        STATE['step'] = 0
+        if STATE['live']:
+            print('\r' + ' ' * STATE['live'] + '\r', end='', file=sys.stderr, flush=True)
+            STATE['live'] = 0
+
+class CountingPool:
+    # multiprocessing.Pool for char_raw, counting the finished jobs; same results in the same order.
+    def __init__(self, n):
+        import multiprocessing
+        self.pool, self.done, self.total = multiprocessing.Pool(n), 0, 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return self.pool.__exit__(*exc)
+
+    def map(self, fn, items):
+        items = list(items)
+        self.total, out = len(items), []
+        for r in self.pool.imap(fn, items):
+            out.append(r)
+            self.done = len(out)
+        return out
+
 def unpack(text):
     return zlib.decompress(base64.b64decode(text))
+
+def save(path, data):
+    # Write and close at once (PyPy closes a file left open only when its garbage collector runs).
+    with open(path, 'wb' if isinstance(data, (bytes, bytearray)) else 'w') as f:
+        f.write(data)
 
 def load_modules(sources, folder):
     """Write the modules to a folder and import the ones run in this process (real files: subprocesses run the others)."""
@@ -5014,6 +5127,7 @@ def call(mod, *argv):
         r = mod.main()
     finally:
         sys.argv = old
+        gc.collect()                            # PyPy: close (and flush) the files the module left open
     if r:
         raise RuntimeError(f'{mod.__name__} failed ({r})')
 
@@ -5025,33 +5139,58 @@ def music(m, mods, mvs, t, log):
     for name, off in (('084-v1.v1', 0), ('084-v2.v2', 0x400000), ('084-v3.v3', 0x800000)):
         b = z.read(name)
         vrom[off:off + len(b)] = b
-    open(os.path.join(t, 'vrom.bin'), 'wb').write(vrom)
+    save(os.path.join(t, 'vrom.bin'), vrom)
     for c in CODES:
         os.makedirs(os.path.join(cap, c))
-        open(os.path.join(cap, c, 'out.txt'), 'w').write(f'SNDSEQ f=767 v={c}\n')
+        save(os.path.join(cap, c, 'out.txt'), f'SNDSEQ f=767 v={c}\n')
     workers = max(1, min(len(CODES), os.cpu_count() or 1))
-    print(f'* capturing the {len(CODES)} pieces of music from the MVS sound program, {workers} at a time '
-          f'(about {4.5 * len(CODES) / workers:.0f} minutes on a recent processor)', file=sys.stderr)
+    log.write(f'music capture: {workers} at a time\n')
+    outs = {}
+    total = (828 * 67584 + 420 * 4000000) / 4000000      # emulated seconds of a capture (m1_capture: fin)
+
+    def done():
+        # Each ym.log line starts with the emulated time of the write: the last one says how far that capture is.
+        s = 0.0
+        for c in CODES:
+            if c in outs:
+                s += 1
+                continue
+            try:
+                with open(os.path.join(cap, c, 'ym.log'), 'rb') as f:
+                    f.seek(0, 2)
+                    f.seek(max(0, f.tell() - 256))
+                    lines = f.read().split(b'\n')
+                s += min(0.999, float(lines[-2].split()[0]) / total) if len(lines) > 1 else 0
+            except (OSError, ValueError, IndexError):
+                pass
+        return s / len(CODES)
+    step(1, done)
 
     def one(c):
         r = subprocess.run([sys.executable, os.path.join(mods, 'm1_capture.py'), mvs, c, os.path.join(cap, c, 'ym.log')],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, encoding='utf-8', errors='replace')
         if r.returncode:
-            raise RuntimeError(f'music capture {c}: {r.stderr.strip()[-300:]}')
+            raise RuntimeError(f'music capture {c}: {r.stderr.strip()[-2000:]}')
         return r.stdout
-    done = 0
     with concurrent.futures.ThreadPoolExecutor(workers) as ex:
-        for out in ex.map(one, CODES):
-            done += 1
-            log.write(out)
-            print(f'  {done}/{len(CODES)}', file=sys.stderr)
+        futures = {ex.submit(one, c): c for c in CODES}
+        try:
+            for f in concurrent.futures.as_completed(futures):
+                outs[futures[f]] = f.result()
+        except BaseException:
+            for f in futures:                   # Ctrl-C or a failed capture: start no other piece
+                f.cancel()
+            raise
+    for c in CODES:
+        log.write(outs[c])
     police = os.path.join(t, 'police.bin')
-    open(police, 'wb').write(unpack(VERSIONS['arcade']['police']))
+    save(police, unpack(VERSIONS['arcade']['police']))
     os.environ.update(YMSC_ADPCM='1', JUKE_CAPTURE=cap, JUKE_VROM=os.path.join(t, 'vrom.bin'), JUKE_POLICE=police)
     m['juke'].C, m['juke'].V = os.path.join(cap, ''), os.path.join(t, 'vrom.bin')   # (read by juke at import time)
-    print('* converting the music for the Saturn sound chip', file=sys.stderr)
     paquet = os.path.join(t, 'paquet', 'paquet.bin')
     os.makedirs(os.path.dirname(paquet))
+    ymsc = os.path.join(t, 'paquet', 'ymsc')               # juke writes one .ymsc per piece there, once converted
+    step(2, lambda: len([n for n in os.listdir(ymsc) if n.endswith('.ymsc')]) / len(CODES))
     call(m['juke'], paquet)
     return paquet
 
@@ -5063,14 +5202,14 @@ def build(cue, rom, mvs, out_dir):
             raise RuntimeError(f'{mvs}: {name} missing (MVS ROM set kof95 expected)')
     os.makedirs(out_dir, exist_ok=True)
     ss = os.path.join(out_dir, 'kof95_cart.ss')
-    log = io.StringIO()
+    log = LOG
     with tempfile.TemporaryDirectory() as t:
         mods = os.path.join(t, 'modules')
         os.makedirs(mods)
         m = load_modules(v['modules'], mods)
         boot, elf = os.path.join(t, 'boot.bin'), os.path.join(t, 'cdrom.elf')
-        open(boot, 'wb').write(unpack(v['boot']))
-        open(elf, 'wb').write(unpack(v['elf']))
+        save(boot, unpack(v['boot']))
+        save(elf, unpack(v['elf']))
         p = os.path.join(t, 'p')
         disc = cue
         cue = os.path.join(t, 'compact', 'compact.cue')
@@ -5078,23 +5217,28 @@ def build(cue, rom, mvs, out_dir):
         blobs = os.path.join(t, 'blobs.txt')
         with contextlib.redirect_stdout(log):
             paquet = music(m, mods, mvs, t, log)
-            print('* preparing the sound effects', file=sys.stderr)
+            step(3)
             call(m['bruitages'], disc, mvs, os.path.join(t, 'bruitages'))
-            print('* compacting the data track', file=sys.stderr)
+            step(4)
             call(m['compact_track'], disc, rom, os.path.join(t, 'compact'), '--strip')
-            print('* preparing the stage tiles and the voice table', file=sys.stderr)
+            step(5)
             call(m['precalc_decors'], '--sat', '--source', disc, cue, os.path.join(t, 'decors'))
             call(m['voice_banks'], cue, os.path.join(t, 'voice'))
-            print('* patching the game files', file=sys.stderr)
+            step(6)
             call(m['patch_kof95'], cue, elf, p)
             with open(blobs, 'w') as f:
                 for d in ('decors', 'voice', 'p'):
                     f.write(open(os.path.join(t, d, 'blobs.txt')).read())
-            print('* building the cartridge image', file=sys.stderr)
+            step(7)
             call(m['build_cart'], cue, rom, boot, ss_c2, '--run-from-cart', '--replace', '0=' + os.path.join(p, '0'),
                  '--replace', 'MM.BIN=' + os.path.join(p, 'MM.BIN'), '--blobs', blobs,
                  '--table', os.path.join(t, 'file_table.tsv'))
-            print("* decompressing every tile with the game's own decompressor (a few minutes)", file=sys.stderr)
+            pool = []
+            def counting(n):
+                pool.append(CountingPool(n))
+                return pool[-1]
+            m['char_raw'].Pool = counting
+            step(8, lambda: pool[0].done / pool[0].total)
             raw_log = io.StringIO()
             with contextlib.redirect_stdout(raw_log):
                 call(m['char_raw'], ss_c2, os.path.join(t, 'file_table.tsv'), elf, raw, '--blobs', blobs,
@@ -5102,9 +5246,9 @@ def build(cue, rom, mvs, out_dir):
             log.write(raw_log.getvalue())
             with open(os.path.join(t, 'char_raw.log'), 'w') as f:
                 f.write(raw_log.getvalue())
-            print('* adding the order-screen taunts', file=sys.stderr)
+            step(9)
             call(m['taunt'], raw, elf, os.path.join(t, 'char_raw.log'), clean)
-            print('* adding the music player, the music and the sound effects (48 MiB)', file=sys.stderr)
+            step(10)
             d = bytearray(open(clean, 'rb').read())
             mus, pq = unpack(v['mus']), open(paquet, 'rb').read()
             br = open(os.path.join(t, 'bruitages', 'bruit.bin'), 'rb').read()
@@ -5128,17 +5272,19 @@ def build(cue, rom, mvs, out_dir):
             for x in SITES_FNS:
                 d[bases[0] + x + 3] = 0xB8      # pitch of three channels
             d += b'\xff' * ((48 << 20) - len(d))
-            open(ss, 'wb').write(d)
-            print('* copying the background tiles in VDP2 cell order', file=sys.stderr)
+            save(ss, d)
+            step(11)
             call(m['vdp2_cells'], ss)
         sys.path.remove(mods)
+    step(12)
     data = open(ss, 'rb').read()
     mister = os.path.join(out_dir, 'kof95_cart_48M.bin')
-    open(mister, 'wb').write(data)
-    open(os.path.join(out_dir, 'kof95_cart.log'), 'w').write(log.getvalue())
+    save(mister, data)
+    sums = [hashlib.sha256(open(path, 'rb').read()).hexdigest() for path in (ss, mister)]
+    finish()
+    say(f'done in {clock(time.monotonic() - STATE["t0"])}')
     ok = True
-    for path, ref in zip((ss, mister), v['sha']):
-        h = hashlib.sha256(open(path, 'rb').read()).hexdigest()
+    for path, ref, h in zip((ss, mister), v['sha'], sums):
         good = h == ref
         ok &= good
         print(f'{path}: {"OK, identical to the reference" if good else "DIFFERENT from the reference " + ref[:16]}')
@@ -5149,14 +5295,43 @@ def main():
     if len(args) not in (3, 4):
         print(__doc__)
         return 1
+    if not sys.flags.utf8_mode:
+        # Run again in UTF-8 mode, the build's subprocesses too (PYTHONUTF8): on Windows the console code page
+        # cannot carry the text the build modules print.
+        p = subprocess.Popen([sys.executable, '-X', 'utf8', os.path.abspath(__file__), *args],
+                             env={**os.environ, 'PYTHONUTF8': '1'})
+        while True:
+            try:
+                return p.wait()
+            except KeyboardInterrupt:           # Ctrl-C reaches the build too: let it stop and write its log
+                pass
     cue, rom, mvs = args[:3]
     out = args[3] if len(args) == 4 else '.'
+    head = (f'kof95_cart.py 2.0.0-beta.2, Python {platform.python_version()} on {platform.platform()}, '
+            f'{os.cpu_count()} processor threads')
+    print(head, file=sys.stderr)
+    LOG.write(head + '\n')
+    threading.Thread(target=ticker, daemon=True).start()
     try:
         ok = build(cue, rom, mvs, out)
-    except Exception as e:
-        print(f'error: {e}', file=sys.stderr)
-        return 2
-    return 0 if ok else 3
+        code = 0 if ok else 3
+    except BaseException as e:
+        code = 130 if isinstance(e, KeyboardInterrupt) else 2
+        n = STATE['step']
+        where = f' at step {n}/{len(STEPS)} ({STEPS[n - 1]})' if n else ''
+        finish()
+        say(f'error{where}: {"interrupted" if code == 130 else e}')
+        LOG.write(f'error{where}, after {clock(time.monotonic() - STATE["t0"])}:\n{traceback.format_exc()}')
+    path = os.path.join(out, 'kof95_cart.log')
+    try:
+        os.makedirs(out, exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(LOG.getvalue())
+        if code:
+            print(f'details in {path} (please attach this file when you report the error)', file=sys.stderr)
+    except OSError:
+        pass
+    return code
 
 if __name__ == '__main__':
     sys.exit(main())

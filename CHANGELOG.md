@@ -2,6 +2,22 @@
 
 Versions follow `major.minor.patch`: patch = fix, minor = addition that breaks nothing, major = big change.
 
+## 2.0.0-beta.2 — 2026-11-15 (pre-release)
+
+Same cartridge image as 2.0.0-beta.1 (identical SHA-256): this version changes only how it is built.
+
+- **A builder with a window** for Windows and Linux (64-bit): choose the three dumps, press Start, follow the steps.
+  One archive per system, with everything inside (the window, the script and PyPy): nothing to install.
+- **5 to 15 times faster** with PyPy, now included in the archives and supported by the script: about 3 minutes
+  instead of 12 on a 16-thread processor, and much more saved on smaller ones.
+- **Progress bar**: each step and how far it is, measured from the work actually done.
+- **Clearer errors**: the step that failed is shown, and `kof95_cart.log` is always written, with the details to report.
+- **Ctrl-C** now stops the whole build at once (the second wave of music captures used to start anyway).
+- **Windows**: the script runs in UTF-8 mode, so that system languages without the accented letters of its messages
+  cannot break it.
+
+    pypy3 kof95_cart.py "path/to/King of Fighters '95.cue" path/to/mpr-18811-mx.ic1 path/to/kof95.zip out
+
 ## 2.0.0-beta.1 — 2026-11-14 (pre-release)
 
 **One version only**: the Neo Geo arcade sound on the Saturn, with no loading. `kof95_cart.py` now builds a single 48 MiB
