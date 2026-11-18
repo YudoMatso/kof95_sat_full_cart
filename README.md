@@ -6,8 +6,9 @@ This project is a proof of concept. It takes the Japanese Saturn version of *The
 
 The repository contains **no game data**. You build the cartridge image yourself from your own copies of the game.
 
-> **Version 2.0 is a beta** (pre-release). The previous version, 1.1.0, is still available from the releases page.
-> New in 2.0.0-beta.2: a builder with a window for Windows and Linux, and a build about 5 to 15 times faster.
+> **Version 2.0 is the main version**: the whole game on one 48 MiB cartridge, no CD.
+> Version 1.1.0 (32 MiB cartridge, music from the CD) remains as an option: see [Optional: version 1.1.0](#optional-version-110-32-mib-cartridge-and-the-cd).
+> New in 2.0.0-beta.2: a launcher for Windows and Linux, and a build about 5 to 15 times faster.
 
 ## Why this matters
 
@@ -45,8 +46,9 @@ What made it hard: the Saturn port is the Neo Geo's 68000 program translated to 
 
 ## Status
 
-- **Beta.** Works in the Mednafen emulator and on **MiSTer** (with a modified Saturn core, see below), checked by automated runs and played by hand.
-- **Not tested on a real Saturn**: the image is 48 MiB, and no Saturn flash cartridge of that size is known to exist.
+- **Works** in the Mednafen emulator and on **MiSTer** (with a modified Saturn core, see below), checked by automated runs and played by hand.
+- **Japan region only**, like the original game: the emulator or the console must be set to Japan (see [Playing](#playing)).
+- **Not working yet on a real Saturn.** The image is 48 MiB, which a Wasca cartridge with 48 MiB support can hold. In the first test, on a European Saturn with the image's region changed to Europe, the game goes back to the BIOS after about 2 seconds of black screen. This is being looked into.
 - **Not fully covered**: bosses, endings, 2-player mode.
 
 ## Building the cartridge image
@@ -57,7 +59,7 @@ You need your own dumps of the game:
 - the 2 MiB ROM cartridge sold with the game: `mpr-18811-mx.ic1`;
 - the Neo Geo MVS ROM set of *The King of Fighters '95*: `kof95.zip` (MAME name `kof95`; the sound files `084-m1.m1`, `084-v1.v1`, `084-v2.v2` and `084-v3.v3` are read).
 
-### The easy way: the builder with a window (Windows, Linux)
+### The easy way: the launcher (Windows, Linux)
 
 Download the archive for your system from the releases page, and unpack it anywhere:
 
@@ -66,9 +68,9 @@ Download the archive for your system from the releases page, and unpack it anywh
 | Windows 10/11, 64-bit | `kof95_cart-<version>-windows-x64.zip` |
 | Linux, 64-bit (glibc 2.31 or later: Ubuntu 20.04, Debian 11 or later) | `kof95_cart-<version>-linux-x64.tar.gz` |
 
-Start `kof95_cart_gui` (`kof95_cart_gui.exe` on Windows), choose the three files with the **Browse…** buttons or drop them on the window, and press **Start**. The window checks the files, shows the progress of each step, and tells you when the image is ready.
+Start `kof95_cart_gui` (`kof95_cart_gui.exe` on Windows), choose the three files with the **Browse…** buttons or drop them on the window, and press **Start**. The launcher checks the files, shows the progress of each step, and tells you when the image is ready.
 
-The archive holds the window, the build script `kof95_cart.py` and [PyPy](https://pypy.org), a fast version of Python (MIT license), so nothing has to be installed. On Linux, the file dialogs use the desktop portal (`xdg-desktop-portal`, present on the usual desktops); without it, type or drop the paths.
+The archive holds the launcher, the build script `kof95_cart.py` and [PyPy](https://pypy.org), a fast version of Python (MIT license), so nothing has to be installed. On Linux, the file dialogs use the desktop portal (`xdg-desktop-portal`, present on the usual desktops); without it, type or drop the paths.
 
 ### From a terminal: the script alone
 
@@ -90,7 +92,7 @@ The archives above also run the script this way: `pypy/bin/pypy3 kof95_cart.py �
 
 Most of the time goes into rebuilding the 23 pieces of music from the arcade sound program, on all the processor's cores: **about 3 minutes with PyPy** on a recent processor (16 threads), **from about 15 minutes to 2 hours with the usual Python**. A progress bar shows each step. If the build fails, the step that failed is shown and `kof95_cart.log`, in the output folder, has the details: please attach it when you report a problem.
 
-Tested on Linux, and on Windows under Wine (Python 3.13 and PyPy 3.11). macOS should work with the script alone, but has not been tested.
+Tested on Linux, on Windows under Wine (Python 3.13 and PyPy 3.11), and by players on Windows. macOS should work with the script alone, but has not been tested.
 
 You get two files in `out/`, the same 48 MiB image:
 
@@ -103,7 +105,7 @@ The script checks the result: it prints **"OK, identical to the reference"** whe
 
 ## Playing
 
-**Mednafen** (tested with version 1.32.1 on Linux, with a Saturn BIOS; Mednafen on Windows should work the same way). No CD is needed:
+**Mednafen** (tested with version 1.32.1 on Linux, with a Saturn BIOS; Mednafen on Windows should work the same way). No CD is needed. Keep the default region, Japan (`ss.region_default jp`):
 
 ```sh
 mednafen out/kof95_cart.ss
@@ -111,11 +113,15 @@ mednafen out/kof95_cart.ss
 
 **Other emulators**: the image is a 48 MiB ROM cartridge, which is not a standard Saturn cartridge. Only Mednafen has been tested.
 
-**MiSTer**: the official Saturn core only reads 2 MiB of cartridge. Use the modified core [Saturn_MiSTer_Cart](https://github.com/YudoMatso/Saturn_MiSTer_Cart) (branch `rom-32m`, release v1.1.0 `Saturn_Cart_20261114` or later) in "ROM 32/48M" mode and load `kof95_cart_48M.bin` as the cartridge. No CD is needed.
+**MiSTer**: the official Saturn core only reads 2 MiB of cartridge. Use the modified core [Saturn_MiSTer_Cart](https://github.com/YudoMatso/Saturn_MiSTer_Cart) (branch `rom-32m`, release v1.1.0 `Saturn_Cart_20261114` or later) in "ROM 32/48M" mode and load `kof95_cart_48M.bin` as the cartridge. No CD is needed. Set **Region** to **Japan** (the default): "Auto" takes the region from a CD, so it does not work here.
+
+## Optional: version 1.1.0 (32 MiB cartridge and the CD)
+
+If your setup cannot use a 48 MiB cartridge, the earlier [version 1.1.0](https://github.com/YudoMatso/kof95_sat_full_cart/releases/tag/v1.1.0) builds a 32 MiB image. The cartridge starts the game and holds all its data, with no loading screens. The CD stays in the drive and only plays the music: the Saturn release's soundtrack, with the Saturn sound effects and voices. It needs only the disc and the 2 MiB ROM (no Neo Geo set). It has no launcher: use the `kof95_cart.py` of that release from a terminal, with Python 3.8 or later; its [README](https://github.com/YudoMatso/kof95_sat_full_cart/blob/v1.1.0/README.md) explains how to build and play it (MiSTer: same core, "ROM 32M" mode, with the CD image).
 
 ## License
 
-The code of this project (`kof95_cart.py` and the builder window, source in `gui/`) is free software under the **GNU General Public License v3.0 or later**: you can use, study, modify and share it, as long as modified versions stay under the same license. See `LICENSE`. The release archives also contain PyPy, under its own MIT license (`pypy/LICENSE`).
+The code of this project (`kof95_cart.py` and the launcher, source in `gui/`) is free software under the **GNU General Public License v3.0 or later**: you can use, study, modify and share it, as long as modified versions stay under the same license. See `LICENSE`. The release archives also contain PyPy, under its own MIT license (`pypy/LICENSE`).
 
 ## Legal
 

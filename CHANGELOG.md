@@ -2,7 +2,7 @@
 
 Versions follow `major.minor.patch`: patch = fix, minor = addition that breaks nothing, major = big change.
 
-## 2.0.0-beta.2 — 2026-11-15 (pre-release)
+## 2.0.0-beta.2 — 2026-11-15
 
 Same cartridge image as 2.0.0-beta.1 (identical SHA-256): this version changes only how it is built.
 
@@ -20,7 +20,7 @@ Same cartridge image as 2.0.0-beta.1 (identical SHA-256): this version changes o
 
     pypy3 kof95_cart.py "path/to/King of Fighters '95.cue" path/to/mpr-18811-mx.ic1 path/to/kof95.zip out
 
-## 2.0.0-beta.1 — 2026-11-14 (pre-release)
+## 2.0.0-beta.1 — 2026-11-14
 
 **One version only**: the Neo Geo arcade sound on the Saturn, with no loading. `kof95_cart.py` now builds a single 48 MiB
 image; the 1.x variants (`noloading`, `pure`) stay available in the 1.1.0 release.
