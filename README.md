@@ -1,8 +1,10 @@
-# The King of Fighters '95 on Sega Saturn — cartridge edition
+# The King of Fighters '95 Full Cart (Sega Saturn)
 
 **What if the Saturn had received its Neo Geo ports on cartridge instead of CD?**
 
-This project is a proof of concept. It takes the Japanese Saturn version of *The King of Fighters '95* and moves the whole game from the CD to a large cartridge, the way Neo Geo games are delivered. The goal is to show that the Saturn could have matched the Neo Geo on this kind of game, even though the Saturn is much harder to program than SNK's hardware for a sprite-heavy 2D fighting game.
+This project takes the Japanese Saturn version of *The King of Fighters '95* and moves the whole game from the CD to one 48 MiB cartridge, the way Neo Geo games are delivered, with the Neo Geo arcade music, sound effects and voices. No CD, no loading screens.
+
+**From the VS screen to the fight: 4.5 seconds on the original Saturn CD, 0.6 seconds on the cartridge.**
 
 The repository contains **no game data**. You build the cartridge image yourself from your own copies of the game.
 
@@ -10,11 +12,13 @@ The repository contains **no game data**. You build the cartridge image yourself
 > Version 1.1.0 (32 MiB cartridge, music from the CD) remains as an option: see [Optional: version 1.1.0](#optional-version-110-32-mib-cartridge-and-the-cd).
 > New in 2.0.0-beta.2: a launcher for Windows and Linux, and a build about 5 to 15 times faster.
 
-## Why this matters
+## Quick start
 
-On Neo Geo, a fighting game lives on a huge cartridge: the next fight starts almost instantly. On Saturn, the same game came on CD, with a 2× drive and little memory, so you waited on a **"NOW LOADING"** screen before every fight, the music paused between rounds, and the sound was redone with the Saturn's own samples.
+1. Download the launcher for your system (Windows or Linux) from the [releases page](https://github.com/YudoMatso/kof95_sat_full_cart/releases) and unpack it.
+2. Start `kof95_cart_gui`, choose your own dumps (the Japanese disc, the 2 MiB ROM cartridge, the Neo Geo `kof95.zip`) and press **Start**. About 3 minutes.
+3. Play `kof95_cart.ss` in Mednafen, or `kof95_cart_48M.bin` on MiSTer, with the region set to Japan. No CD needed.
 
-The limit was the medium, not necessarily the console: the Saturn's cartridge port can address 48 MiB, enough for the entire game and the arcade sound. This project puts that to the test.
+Details below: [Building the cartridge image](#building-the-cartridge-image) and [Playing](#playing).
 
 ## What it does
 
@@ -28,7 +32,7 @@ The limit was the medium, not necessarily the console: the Saturn's cartridge po
 - **Team-order screen as on the arcade version**: the characters taunt once the order is chosen, and the one being chosen moves (the Saturn release had dropped both).
 - **Same game otherwise**: same graphics, same gameplay as the Saturn release.
 
-| | Original Saturn CD | This version | Neo Geo (arcade) |
+| | Original Saturn CD | Full Cart | Neo Geo (arcade) |
 |---|---|---|---|
 | Loading before each fight | about 5 seconds of "NOW LOADING" | none (same timing as the arcade) | none |
 | Music | CD soundtrack, stops between rounds | arcade soundtrack, continues | arcade soundtrack, continues |
@@ -37,12 +41,6 @@ The limit was the medium, not necessarily the console: the Saturn's cartridge po
 | Team-order screen taunts | no | yes | yes |
 
 Slowdowns are almost always a single 1/60 s frame.
-
-## How it was done, in short
-
-The game was not rewritten. It was **patched**: the part of the game that reads files from the CD now reads them from the cartridge, the waits that were only there because of the slow CD drive were removed or shortened, and the sound requests of the game are sent to a new player of the arcade music and sounds. Where the arcade version is faster, the Saturn version was measured against it frame by frame and tuned to match.
-
-What made it hard: the Saturn port is the Neo Geo's 68000 program translated to the Saturn's SH-2 processors, its graphics chips cannot read the cartridge directly, and the sound chip has its own small memory. Every piece of data has to be copied to the right place at the right time. The arcade music is rebuilt on your machine from the arcade sound program, run by an emulated Z80, then converted for the Saturn's sound chip.
 
 ## Status
 
@@ -118,6 +116,20 @@ mednafen out/kof95_cart.ss
 ## Optional: version 1.1.0 (32 MiB cartridge and the CD)
 
 If your setup cannot use a 48 MiB cartridge, the earlier [version 1.1.0](https://github.com/YudoMatso/kof95_sat_full_cart/releases/tag/v1.1.0) builds a 32 MiB image. The cartridge starts the game and holds all its data, with no loading screens. The CD stays in the drive and only plays the music: the Saturn release's soundtrack, with the Saturn sound effects and voices. It needs only the disc and the 2 MiB ROM (no Neo Geo set). It has no launcher: use the `kof95_cart.py` of that release from a terminal, with Python 3.8 or later; its [README](https://github.com/YudoMatso/kof95_sat_full_cart/blob/v1.1.0/README.md) explains how to build and play it (MiSTer: same core, "ROM 32M" mode, with the CD image).
+
+## How it was done, in short
+
+On Neo Geo, the game lived on a huge cartridge. On Saturn, it came on CD, with a 2× drive and little memory: a "NOW LOADING" screen before every fight, the music paused between rounds, and the sound redone with the Saturn's own samples. The limit was the medium, not necessarily the console: the Saturn's cartridge port can address 48 MiB, enough for the whole game and the arcade sound. This project is a proof of concept of that.
+
+The game was not rewritten, it was **patched**. The part of the game that reads files from the CD now reads them from the cartridge, the waits that were only there for the slow CD drive were removed, and the sound requests of the game go to a new player of the arcade music and sounds, running on the Saturn's second processor. Where the arcade version is faster, the Saturn version was measured against it frame by frame and tuned to match.
+
+The hard part: the Saturn port is the Neo Geo's 68000 program translated to the Saturn's SH-2 processors, its graphics chips cannot read the cartridge directly, and the sound chip has its own small memory, so every piece of data has to be copied to the right place at the right time. The arcade music is rebuilt on your machine from the arcade sound program, run by an emulated Z80, then converted for the Saturn's sound chip.
+
+## Thanks
+
+- hitomi2500, for testing on real hardware with the Wasca cartridge;
+- srg320 and the MiSTer Saturn core developers ([Saturn_MiSTer](https://github.com/MiSTer-devel/Saturn_MiSTer)), on which the modified core is based;
+- the Mednafen authors.
 
 ## License
 
