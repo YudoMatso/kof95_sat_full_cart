@@ -1,9 +1,9 @@
 [package]
-name = "kof95_cart_gui"
-version = "2.0.0-beta.2"
+name = "kof95_cart_builder"
+version = "2.1.0-beta.1"
 edition = "2021"
 license = "GPL-3.0-or-later"
-description = "Graphical front end of kof95_cart.py (The King of Fighters '95 Saturn cartridge edition builder)"
+description = "The builder of The King of Fighters '95 Full Cart (Sega Saturn): a window for the build script kof95_cart.py"
 
 [dependencies]
 eframe = "=0.31.1"

@@ -7,5 +7,5 @@ out/
 *.log
 __pycache__/
 
-# Rust build folder of the builder window
-gui/target/
+# Rust build folder of the builder
+builder/target/
