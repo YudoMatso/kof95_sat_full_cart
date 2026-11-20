@@ -108,7 +108,7 @@ pypy3 kof95_cart.py "C:\Games\King of Fighters '95.cue" C:\Games\mpr-18811-mx.ic
 
 The archives above also run the script this way: `pypy/bin/pypy3 kof95_cart.py …` on Linux, `pypy\pypy3.exe kof95_cart.py …` on Windows.
 
-For the 48 MiB cartridge, most of the time goes into rebuilding the 23 pieces of music from the arcade sound program, on all the processor's cores: **about 3 minutes with PyPy** on a recent processor (16 threads), **from about 15 minutes to 2 hours with the usual Python**. The 32 MiB cartridge takes about a minute. A progress bar shows each step. If the build fails, the step that failed is shown and `kof95_cart.log`, in the output folder, has the details: please attach it when you report a problem.
+With PyPy (included in the builder archives), the 48 MiB cartridge takes **about 3 minutes** on a recent processor (16 threads): most of the time goes into rebuilding the 23 pieces of music from the arcade sound program, on all the processor's cores. The 32 MiB cartridge takes **a few seconds**. A progress bar shows each step. If the build fails, the step that failed is shown and `kof95_cart.log`, in the output folder, has the details: please attach it when you report a problem.
 
 Tested on Linux, on Windows under Wine (Python 3.13 and PyPy 3.11), and by players on Windows. macOS should work with the script alone, but has not been tested.
 

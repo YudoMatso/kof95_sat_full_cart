@@ -14,8 +14,7 @@ The game:
   game's code run as native code.
 - **Controls as fast as the arcade board**: a button press shows on screen 5 frames later, like on the Neo Geo (7 in
   2.0.0-beta.2).
-- **Sound effects and voices start at the same moment as on the Neo Geo**, and no longer crackle on MiSTer when the
-  action is busy.
+- **48 MiB cartridge: the sound effects and voices start at the same moment as on the Neo Geo.**
 - **Fixes of bugs present since 2.0.0-beta.1**:
   - the cutscene after Saisyu lasted 2 seconds too long;
   - the team picture in the cutscenes showed the wrong characters;
@@ -46,7 +45,7 @@ The builder (the window, now `kof95_cart_builder`, formerly `kof95_cart_gui`):
 - **a new look**: dark theme, bigger text, aligned fields, readable progress and results.
 
 The build script `kof95_cart.py`: `kof95.zip` is optional, the same disc formats as the builder; the 32 MiB cartridge
-builds in about a minute.
+builds in a few seconds with PyPy.
 
 MiSTer: unchanged, core [Saturn_MiSTer_Cart](https://github.com/YudoMatso/Saturn_MiSTer_Cart) v1.1.0 or later, "ROM
 32/48M" mode; for the 32 MiB cartridge, also load the disc image (Saturn, Neo Geo CD or PlayStation).
